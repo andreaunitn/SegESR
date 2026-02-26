@@ -1,6 +1,13 @@
-# SegESR: Segmentation Enhanced Super-Resolution via SAM 2 Priors
+# SegESR: Segmentation Enhanced Super-Resolution
 
-**SegESR** is an advanced image super-resolution diffusion framework that leverages the powerful semantic capabilities of **Segment Anything Model 2 (SAM 2)**. Building upon the foundation of [SeeSR](https://github.com/cswry/SeeSR), this project introduces novel architectural improvements and optimization strategies to enhance generation quality and efficiency.
+**TL;DR:** **SegESR** is an advanced image super-resolution diffusion framework that leverages the power of a foundational segmentation model. Building upon the foundation of [SeeSR](https://github.com/cswry/SeeSR), this project introduces novel architectural improvements and optimization strategies to enhance generation quality and efficiency.
+
+---
+
+## 📄 Abstract
+**TL;DR:** Diffusion-based Image Super-Resolution (ISR) models achieve remarkable perceptual quality but often suffer from structural hallucinations. Specifically, existing semantic-aware methods rely on high-level tags or text prompts that inherently lack fine-grained geometric information. In this work, we propose *Segmentation Enhanced Super-Resolution* (SegESR), a novel framework leveraging the hierarchical layout-preserving features of a foundational segmentation model, alongside text, to construct a robust structural scaffold for the restoration process. To effectively integrate these priors, we introduce the *Parallel Attention Fusion Block* (PAFB). This module disentangles semantic and spatial conditions, injecting them via a parallel stream architecture. Furthermore, we design a perceptual loss optimized directly within the pre-trained segmentation feature space. Extensive experiments demonstrate that SegESR effectively mitigates hallucinations, achieving state-of-the-art synthetic fidelity (+2.22 dB PSNR, +0.06 SSIM) and competitive real-world perceptual quality (+0.008 CLIPIQA).
+
+---
 
 ## 🧩 Architecture Overview
 ![segesr](figs/model_overview.png)
@@ -12,7 +19,7 @@ Unlike traditional super-resolution methods, SegESR integrates segmentation-awar
 * **SAM 2-Guided Generation**: Introduced two new semantic priors derived from SAM 2:
     * **SICA (SAM Image Cross-Attention)**: Leverages SAM 2 image embeddings from the [Hiera Encoder](https://huggingface.co/docs/transformers/model_doc/hiera).
     * **SMCA (SAM Masks Cross-Attention)**: Utilizes SAM 2 segmentation embeddings to preserve object boundaries and details.
-* **Parallelized CAFB Architecture**: Introduced the *Cross-Attention Fusion Block (CAFB)*. Text, image embeddings and segmentation embeddings are now processed in **parallel** and fused via a trainable convolutional layer, streamlining the information flow compared to sequential approaches.
+* **Parallelized PAFB Architecture**: Introduced the *Parallel Attention Fusion Block (PAFB)*. Text, image embeddings and segmentation embeddings are now processed in **parallel** and fused via a trainable convolutional layer, streamlining the information flow compared to sequential approaches.
 * **SAM 2 Perceptual Loss**: Integrated a new perceptual loss function based on the SAM 2 feature space, supplementing the standard MSE diffusion loss to improve semantic consistency in the super-resolved output.
 * **Memory Optimization**: The architecture is optimized for consumer-grade hardware (e.g., NVIDIA RTX 4090), significantly reducing VRAM usage without compromising performance.
 
