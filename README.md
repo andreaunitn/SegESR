@@ -133,7 +133,5 @@ The following are BibTeX references:
 ## 👨‍💻 Maintainers
 * **Anonymous Authors**
 
-For any question regarding the SegESR implementation, parallelization details or the new loss function, please open an issue in this repository.
-
 ## 🎫 License
 This project and related weights are released under the [Apache 2.0 license](LICENSE).
