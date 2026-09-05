@@ -131,7 +131,7 @@ The following are BibTeX references:
 ```
 
 ## 👨‍💻 Maintainers
-* **Anonymous Authors**
+* **Andrea Tomasoni**
 
 ## 🎫 License
 This project and related weights are released under the [Apache 2.0 license](LICENSE).
