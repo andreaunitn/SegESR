@@ -8,7 +8,7 @@ import sys
 sys.path.append(os.getcwd())
 
 from basicsr.data.realesrgan_dataset import RealESRGANDataset
-from dataloaders.simple_dataset import SimpleDataset
+from segesr.dataloaders.simple_dataset import SimpleDataset
 
 from ram.models import ram
 from ram import inference_ram as inference

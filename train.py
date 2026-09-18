@@ -36,16 +36,16 @@ from diffusers.utils.import_utils import is_xformers_available
 # Will error if the minimal version of diffusers is not installed
 check_min_version("0.21.0.dev0")
 
-from pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
+from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
 from ram.models.ram_lora import ram
 from ram import inference_ram as inference
 
-from models.controlnet import ControlNetModel
-from models.unet_2d_condition import UNet2DConditionModel
-from models.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn
+from segesr.models.controlnet import ControlNetModel
+from segesr.models.unet_2d_condition import UNet2DConditionModel
+from segesr.models.unet_2d_blocks import CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn
 
-from dataloaders.paired_dataset import PairedCaptionDataset
-from utils_data.sam2_processing import load
+from segesr.dataloaders.paired_dataset import PairedCaptionDataset
+from old.utils_data.sam2_processing import load
 
 logger = get_logger(__name__)
 

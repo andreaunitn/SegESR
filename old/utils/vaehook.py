@@ -63,7 +63,7 @@ from einops import rearrange
 import os
 import sys
 sys.path.append(os.getcwd())
-import utils.devices as devices
+import old.utils.devices as devices
 
 try:
     import xformers

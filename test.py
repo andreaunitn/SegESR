@@ -15,13 +15,13 @@ from diffusers import AutoencoderKL, DDPMScheduler
 from diffusers.utils.import_utils import is_xformers_available
 from transformers import CLIPTextModel, CLIPTokenizer, CLIPImageProcessor
 
-from pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
-from utils.wavelet_color_fix import wavelet_color_fix, adain_color_fix
+from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
+from old.utils.wavelet_color_fix import wavelet_color_fix, adain_color_fix
 
 from ram.models.ram_lora import ram
 from ram import inference_ram as inference
 
-from utils_data.sam2_processing import load, get_mask_logits_from_anns
+from old.utils_data.sam2_processing import load, get_mask_logits_from_anns
 
 from typing import Mapping, Any
 from torchvision import transforms
@@ -62,8 +62,8 @@ def load_state_dict_diffbirSwinIR(model: nn.Module, state_dict: Mapping[str, Any
 
 def load_seesr_pipeline(args, accelerator, enable_xformers_memory_efficient_attention):
     
-    from models.controlnet import ControlNetModel
-    from models.unet_2d_condition import UNet2DConditionModel
+    from segesr.models.controlnet import ControlNetModel
+    from segesr.models.unet_2d_condition import UNet2DConditionModel
 
     # Load scheduler, tokenizer and models.
 
