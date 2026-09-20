@@ -5,9 +5,16 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "segesr"
 version = "0.1.0"
+description = "SegESR: Segment Anything Model for Real-World Super-Resolution"
+readme = "README.md"
+requires-python = ">=3.8"
 dependencies = [
     "torch",
-    "diffusers",
+    "diffusers>=0.21.0",
     "transformers",
-    "accelerate"
+    "accelerate",
 ]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["segesr*", "third_party*"]
