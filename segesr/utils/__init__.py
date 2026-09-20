@@ -8,7 +8,7 @@ __all__ = [
     "save_model_card",
     "image_grid",
     "validation",
-    "init_sam2_weights",
+    "init_sam_weights",
     "unfreeze_params",
     "verify_weights",
 ]
