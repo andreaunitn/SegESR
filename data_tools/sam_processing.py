@@ -9,9 +9,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-import sam2.build_sam as build_sam
+import sam2.build_sam as build_sam2
 from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
-from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 SAM_CONFIG = {
     "tiny": {
@@ -59,7 +58,7 @@ def load(apply_postprocessing=False, stability_score_thresh=0.9, model_size="lar
         if os.path.isfile(alt_ckpt):
             resolved_ckpt = alt_ckpt
 
-    sam_model = build_sam(
+    sam_model = build_sam2(
         config_file=resolved_config,
         ckpt_path=resolved_ckpt if os.path.isfile(resolved_ckpt) else None,
         device=device,
