@@ -90,7 +90,7 @@ def extract_features_and_masks(mask_generator, image_rgb, device="cuda"):
 
     # Fetch high-level vision features from predictor state
     if hasattr(predictor, "_features") and predictor._features is not None:
-        img_embeds = predictor._features["image_embeds"].cpu()
+        img_embeds = predictor._features["image_embed"].cpu()
     else:
         from torchvision import transforms
         norm = transforms.Compose([
@@ -147,7 +147,7 @@ if __name__ == "__main__":
     parser.add_argument("--input_dir", type=str, required=True, help="Directory containing RGB images")
     parser.add_argument("--save_dir", type=str, required=True, help="Output directory to save embeddings")
     parser.add_argument("--model_size", type=str, default="large", choices=["tiny", "small", "base_plus", "large"])
-    parser.add_argument("--extention", type=str, default="png", help="Image file extension")
+    parser.add_argument("--extension", type=str, default="png", help="Image file extension")
 
     args = parser.parse_args()
-    process_dataset(args.input_dir, args.save_dir, model_size=args.model_size, extension=args.extention)
+    process_dataset(args.input_dir, args.save_dir, model_size=args.model_size, extension=args.extension)
