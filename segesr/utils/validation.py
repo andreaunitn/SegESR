@@ -7,8 +7,10 @@ import torch.nn.functional as F
 from torchvision import transforms
 from accelerate.logging import get_logger
 
+from ram import inference_ram as inference
 from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
-from third_party.ram import inference_ram as inference
+from segesr.utils.diffusion_utils import decode_latents_to_rgb, get_diffusion_target, predict_original_latents
+from segesr.utils.sam_utils import compute_sam2_conditions, seg_logits_to_hidden_states
 
 logger = get_logger(__name__)
 
@@ -24,6 +26,17 @@ def image_grid(imgs, rows, cols):
 
     return grid
 
+def get_sam_kwargs(batch, device, dtype, use_sam):
+    """Builds the SAM 2 conditioning kwargs expected by the SegESR UNet/ControlNet."""
+
+    if not use_sam:
+        return {}
+
+    return {
+        "sam2_encoder_hidden_states": batch["sam_img_embeds"].to(device, dtype=dtype),
+        "sam2_segmentation_encoder_hidden_states": batch["sam_seg_embeds"].to(device, dtype=dtype),
+    }
+
 def validation(
         unet,
         controlnet,
@@ -33,6 +46,7 @@ def validation(
         noise_scheduler,
         tiny_vae,
         ram_model,
+        sam_generator,
         sam_loss_fn,
         lpips_loss_fn,
         validation_dataloader,
@@ -54,7 +68,7 @@ def validation(
     # -------------------------------------------------------------------------
     # 1. Visual Image Generation (Qualitative Check)
     # -------------------------------------------------------------------------
-    if args.generate_validation_image and accelerator.is_main_process:
+    if args.generate_validation_image and accelerator.is_main_process and args.validation_image:
         pipeline = StableDiffusionControlNetPipeline(
             vae=accelerator.unwrap_model(vae),
             text_encoder=accelerator.unwrap_model(text_encoder),
@@ -64,53 +78,63 @@ def validation(
             scheduler=noise_scheduler,
             safety_checker=None,
             feature_extractor=None,
-            requires_safety_checker=None
+            requires_safety_checker=False
         )
         pipeline = pipeline.to(accelerator.device)
         pipeline.set_progress_bar_config(disable=True)
 
-        if args.validation_image and args.validation_prompt:
-            val_image_path = args.validation_image[0]
-            val_image = Image.open(val_image_path).convert("RGB")
+        val_image_path = args.validation_image[0]
+        val_image = Image.open(val_image_path).convert("RGB")
 
-            tensor_transforms = transforms.ToTensor()
-            ram_transforms = transforms.Compose([
-                transforms.Resize((384, 384)),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ])
+        tensor_transforms = transforms.ToTensor()
+        ram_transforms = transforms.Compose([
+            transforms.Resize((384, 384)),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ])
 
+        with torch.no_grad():
             lq_for_ram = tensor_transforms(val_image).unsqueeze(0).to(accelerator.device)
             lq_for_ram = ram_transforms(lq_for_ram)
             ram_tags = inference(lq_for_ram, ram_model)
             ram_embeds = ram_model.generate_image_embeds(lq_for_ram)
 
-            final_prompt = f"{ram_tags[0]}, clean, high-resolution, 8k"
-            negative_prompt = "dotted, noise, blur, lowres, smooth"
+        sam_kwargs = {}
+        if args.use_sam:
+            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(val_image, sam_generator)
+            sam_kwargs = {
+                "sam2_encoder_hidden_states": sam_img_embeds.to(accelerator.device),
+                "sam2_segmentation_encoder_hidden_states": seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device),
+            }
 
-            width, height = val_image.size
-            cond_image = val_image.resize((width * 4, height * 4))
+        user_prompt = args.validation_prompt[0] if args.validation_prompt else ""
+        final_prompt = ", ".join(p for p in [ram_tags[0], user_prompt, "clean, high-resolution, 8k"] if p)
+        negative_prompt = "dotted, noise, blur, lowres, smooth"
 
-            generator = torch.Generator(device=accelerator.device).manual_seed(args.seed if args.seed else 42)
-            logger.info(f"Generating validation sample at step {global_step} with prompt: '{final_prompt}'")
+        width, height = val_image.size
+        cond_image = val_image.resize((width * 4, height * 4))
 
-            with torch.autocast("cuda"):
-                generated_image = pipeline(
-                    prompt=final_prompt,
-                    image=cond_image,
-                    negative_prompt=negative_prompt,
-                    num_inference_steps=50,
-                    generator=generator,
-                    height=height*4,
-                    width=width*4,
-                    guidance_scale=5.5,
-                    ram_encoder_hidden_states=ram_embeds,
-                ).images[0]
+        generator = torch.Generator(device=accelerator.device).manual_seed(args.seed if args.seed is not None else 42)
+        logger.info(f"Generating validation sample at step {global_step} with prompt: '{final_prompt}'")
 
-            val_dir = os.path.join(args.output_dir, "validation_samples")
-            os.makedirs(val_dir, exist_ok=True)
-            save_path = os.path.join(val_dir, f"step_{global_step}.png")
-            generated_image.save(save_path)
-            logger.info(f"Saved validation image to {save_path}")
+        with torch.autocast("cuda"):
+            generated_image = pipeline(
+                prompt=final_prompt,
+                image=cond_image,
+                negative_prompt=negative_prompt,
+                num_inference_steps=50,
+                generator=generator,
+                height=height*4,
+                width=width*4,
+                guidance_scale=5.5,
+                ram_encoder_hidden_states=ram_embeds,
+                **sam_kwargs,
+            ).images[0]
+
+        val_dir = os.path.join(args.output_dir, "validation_samples")
+        os.makedirs(val_dir, exist_ok=True)
+        save_path = os.path.join(val_dir, f"step_{global_step}.png")
+        generated_image.save(save_path)
+        logger.info(f"Saved validation image to {save_path}")
 
         del pipeline
         torch.cuda.empty_cache()
@@ -152,11 +176,7 @@ def validation(
                     encoder_hidden_states = text_encoder(val_batch["input_ids"].to(accelerator.device))[0]
                     ram_hidden = val_batch["ram_values"].to(accelerator.device, dtype=weight_dtype)
                     controlnet_cond = val_batch["conditioning_pixel_values"].to(accelerator.device, dtype=weight_dtype)
-
-                    sam_kwargs = {
-                        "sam_encoder_hidden_states": val_batch["sam_img_embeds"].to(accelerator.device, dtype=weight_dtype),
-                        "sam_segmentation_hidden_states": val_batch["sam_seg_embeds"].to(accelerator.device, dtype=weight_dtype)
-                    } if args.use_sam else {}
+                    sam_kwargs = get_sam_kwargs(val_batch, accelerator.device, weight_dtype, args.use_sam)
 
                     down_block_res_samples, mid_block_res_sample = controlnet(
                         noisy_latents,
@@ -178,37 +198,24 @@ def validation(
                         **sam_kwargs,
                     ).sample
 
-                    if noise_scheduler.config.prediction_type == "epsilon":
-                        target = noise
-                    elif noise_scheduler.config.prediction_type == "v_prediction":
-                        target = noise_scheduler.get_velocity(latents, noise, timesteps)
-                    else:
-                        raise ValueError(f"Unknown prediction type: {noise_scheduler.config.prediction_type}")
-
+                    target = get_diffusion_target(noise_scheduler, latents, noise, timesteps)
                     diffusion_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
                     batch_loss = diffusion_loss
 
                     if sam_loss_fn is not None or lpips_loss_fn is not None:
-                        alpha_bar_t = noise_scheduler.alphas_cumprod[timesteps]
-                        while len(alpha_bar_t.shape) < len(noisy_latents.shape):
-                            alpha_bar_t = alpha_bar_t.unsqueeze(-1)
-
-                        pred_x0_latents = (noisy_latents - (1 - alpha_bar_t).sqrt() * model_pred) / alpha_bar_t.sqrt()
-                        pred_image_latents = pred_x0_latents / tiny_vae.config.scaling_factor
-                        pred_image = tiny_vae.decode(pred_image_latents.to(weight_dtype)).sample
-
-                        sr_rgb = (pred_image.clamp(-1.0, 1.0) + 1.0) / 2.0
+                        pred_x0_latents = predict_original_latents(noise_scheduler, noisy_latents, model_pred, timesteps)
+                        sr_rgb = decode_latents_to_rgb(tiny_vae, pred_x0_latents, weight_dtype)
                         gt_rgb = (pixel_values.to(torch.float32) + 1.0) / 2.0
 
                         if sam_loss_fn is not None:
                             sam_loss = sam_loss_fn(sr_rgb, gt_rgb)
                             total_val_sam_loss += sam_loss.item()
-                            batch_loss += args.sam_loss_weight * sam_loss
+                            batch_loss = batch_loss + args.sam_loss_weight * sam_loss
 
                         if lpips_loss_fn is not None:
                             lpips_loss = lpips_loss_fn(sr_rgb, gt_rgb)
                             total_val_lpips_loss += lpips_loss.item()
-                            batch_loss += args.lpips_loss_weight * lpips_loss
+                            batch_loss = batch_loss + args.lpips_loss_weight * lpips_loss
 
                     total_val_diffusion_loss += diffusion_loss.item()
                     total_val_loss += batch_loss.item()

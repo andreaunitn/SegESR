@@ -1,0 +1,33 @@
+# SegESR inference configuration.
+# Usage: python test.py --config configs/test_default.yaml \
+#            --finetuned_model_path <checkpoint> --image_path <LR dir> --output_dir <SR dir>
+# Keys are test.py argument names; flags given on the command line override this file.
+
+# ---------------------------------------------------------------- Models
+pretrained_model_path: preset/models/stable-diffusion-2-base
+ram_path: preset/models/ram_swin_large_14m.pth
+ram_ft_path: preset/models/DAPE.pth
+sam_model_size: large
+
+# ---------------------------------------------------------------- Prompts
+prompt: ""
+added_prompt: "clean, high-resolution, 8k"
+negative_prompt: "dotted, noise, blur, lowres, smooth"
+
+# ---------------------------------------------------------------- Sampling
+start_point: lr
+start_steps: 999
+num_inference_steps: 50
+guidance_scale: 5.5
+conditioning_scale: 1.0
+process_size: 512
+upscale: 4
+sample_times: 1
+align_method: adain
+mixed_precision: bf16
+
+# ---------------------------------------------------------------- Tiling (24 GB GPU)
+vae_encoder_tiled_size: 1024
+vae_decoder_tiled_size: 224
+latent_tiled_size: 96
+latent_tiled_overlap: 32

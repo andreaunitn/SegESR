@@ -33,11 +33,14 @@ class SamPerceptualLoss(nn.Module):
             torch.Tensor: Scalar MSE feature loss.
         """
 
-        sr_input = self.normalization(sr_rgb)
+        # The encoder may have been cast to the training weight dtype (fp16/bf16)
+        encoder_dtype = next(self.image_encoder.parameters()).dtype
+
+        sr_input = self.normalization(sr_rgb.float()).to(encoder_dtype)
         sr_embeds = self.image_encoder(sr_input)["vision_features"]
 
         with torch.no_grad():
-            gt_input = self.normalization(gt_rgb)
+            gt_input = self.normalization(gt_rgb.float()).to(encoder_dtype)
             gt_embeds = self.image_encoder(gt_input)["vision_features"]
 
         return F.mse_loss(sr_embeds.float(), gt_embeds.float(), reduction="mean")

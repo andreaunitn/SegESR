@@ -1,6 +1,13 @@
 import os
 import sys
-sys.path.append(os.getcwd())
+from pathlib import Path
+
+# Make the vendored `basicsr` package importable without installation
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _path in (PROJECT_ROOT, PROJECT_ROOT / "third_party"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
+
 import cv2
 
 import torch
@@ -9,8 +16,6 @@ from pytorch_lightning import seed_everything
 
 import argparse
 from basicsr.data.realesrgan_dataset import RealESRGANDataset
-from ram.models import ram
-from ram import inference_ram as inference
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--gt_path", nargs='+', default=['PATH 1', 'PATH 2'], help='the path of high-resolution images')

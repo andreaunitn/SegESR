@@ -10,7 +10,7 @@
 ---
 
 ## 🧩 Architecture Overview
-![segesr](figs/model_overview.png)
+![segesr](assets/figs/model_overview.png)
 
 ## 🔎 Key Innovations
 
@@ -31,16 +31,25 @@ The environment can be set up using standard Python package management.
     
 2.  **Create an environment**
       ```bash
-      conda create -n segesr python=3.8
+      conda create -n segesr python=3.10
       conda activate segesr
       ```
     
 3.  **Install dependencies**
     ```bash
     pip install -r requirements.txt
+    pip install git+https://github.com/facebookresearch/sam2.git   # SAM 2.1
+    pip install -e .                                               # segesr + vendored ram / basicsr
     ```
 
     *Note: If you are using xformers for memory efficiency, ensure it is compatible with your PyTorch/CUDA version.*
+
+    The scripts also work without `pip install -e .` when launched from the repository root.
+
+4.  **Run the tests** (optional)
+    ```bash
+    pytest
+    ```
 
 ## 🚀 Inference
 #### Download the pretrained models
@@ -51,57 +60,73 @@ The environment can be set up using standard Python package management.
 You can put the models into `preset/models`, the test datasets into `preset/datasets/test_datasets` and then run:
 
 ```bash
-./scripts/test.sh
+./scripts/run_test.sh preset/train_output/segesr          # every checkpoint-* of a run, all test datasets + metrics
 ```
+
+or, for a single checkpoint and folder of LR images:
+
+```bash
+python test.py --config configs/test_default.yaml \
+--finetuned_model_path preset/train_output/segesr/checkpoint-XXXX \
+--image_path preset/datasets/test_datasets/RealSR/test_LR \
+--output_dir preset/datasets/output/RealSR
+```
+
+SAM 2.1 weights are downloaded from the Hugging Face Hub (`facebook/sam2.1-hiera-large`) on first use.
 
 ## 🌈 Train 
 #### Step 1: Prepare training data
-Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR was trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled using the `scripts/make_train_subset.sh` script + the first 5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset). Put the images of LSDIR into `preset/datasets/train_datasets/LSDIR/full_dataset`, execute the script and the add the images from FFHQ into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
+Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR was trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled + the first 5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset). Put the sampled LSDIR images and the FFHQ images into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
 
-For making paired data when training SegESR, you can run:
+The whole pipeline (degraded pairs, RAM tags, DAPE embeddings, SAM 2 embeddings and mask logits) can be run with:
 
 ```bash
-python -W ignore utils_data/make_paired_data.py \
---gt_path preset/datasets/train_datasets/LSDIR/finetune_subset \
---save_dir preset/datasets/train_datasets/LSDIR \
---epoch 1
+./scripts/prepare_data.sh preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
+```
+
+or step by step with the scripts in `data_tools/`:
+
+```bash
+python data_tools/make_paired_data.py --gt_path preset/datasets/train_datasets/LSDIR/finetune_subset --save_dir preset/datasets/train_datasets/LSDIR --epoch 1
+python data_tools/make_tags.py --root_path preset/datasets/train_datasets/LSDIR
+python data_tools/make_dape_embeds.py --image_dir preset/datasets/train_datasets/LSDIR/sr_bicubic --embed_dir preset/datasets/train_datasets/LSDIR/dape_embeds --ram_ft_path preset/models/DAPE.pth
+python data_tools/sam_processing.py --image_dir preset/datasets/train_datasets/LSDIR/sr_bicubic --embed_dir preset/datasets/train_datasets/LSDIR/sam_embeds --logit_dir preset/datasets/train_datasets/LSDIR/seg_embeds
 ```
 
 - `--gt_path` the path of gt images. If you have multi gt dirs, you can set it as `PATH1 PATH2 PATH3 ...`
 - `--save_dir` the path of paired images 
 - `--epoch` the number of epoch you want to make
 
-The difference between `make_paired_data_DAPE.py` and `make_paired_data.py` lies in that `make_paired_data_DAPE.py` resizes the entire image to a resolution of 512, while `make_paired_data.py` randomly crops a sub-image with a resolution of 512.
+`make_paired_data.py` randomly crops a sub-image with a resolution of 512.
 
-Include the SAM 2 repository into your own. Then, for making the data, you can run:
-
-```bash
-./scripts/make_seg.sh
-```
-
-Once the degraded data pairs and SAM 2 data are created, generate tag data by running `utils_data/make_tags.py`.
-
-The data folder should be like this:
+The data folder should be like this (files are matched by name):
 
 ```
 your_training_datasets/
     └── gt
         └── 0000001.png # GT images, (512, 512, 3)
-        └── ...
+    └── sr_bicubic
+        └── 0000001.png # bicubic-upsampled LR images, (512, 512, 3)
     └── lr
-        └── 0000001.png # LR images, (512, 512, 3)
-        └── ...
+        └── 0000001.png # LR images, (128, 128, 3)
     └── tag
         └── 0000001.txt # tag prompts
-        └── ...
+    └── dape_embeds
+        └── 0000001.pt  # DAPE image embeddings
+    └── sam_embeds
+        └── 0000001.pt  # SAM 2 image embeddings, (1, 256, 64, 64)
+    └── seg_embeds
+        └── 0000001.pt  # SAM 2 mask decoder logits, (N, 1, 256, 256)
 ```
 
 
 #### Step 2: Training SegESR
 
 ```bash
-./scripts/train.sh
+./scripts/run_train.sh configs/train_default.yaml
 ```
+
+Every key of the YAML config is a `train.py` argument, and flags passed on the command line override the config (e.g. `./scripts/run_train.sh configs/train_default.yaml --max_train_steps=1000`). `configs/train_sam_ablation.yaml` trains the same model without the SAM 2 perceptual loss.
 
 ## 📜 Credits & Acknowledgments
 This project is built upon the excellent research of **SeeSR** and **SAM 2**.

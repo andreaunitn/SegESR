@@ -1,0 +1,56 @@
+# SegESR ablation: SAM 2 conditioning (SICA + SMCA) WITHOUT the SAM 2 perceptual loss.
+# Same setup as train_default.yaml, trained with the diffusion MSE loss only.
+# Usage: accelerate launch train.py --config configs/train_sam_ablation.yaml
+
+# ---------------------------------------------------------------- Models
+pretrained_model_name_or_path: preset/models/stable-diffusion-2-base
+seesr_model_path: preset/models/seesr
+controlnet_model_name_or_path: preset/models/seesr
+tiny_vae_path: preset/models/tiny_vae
+ram_path: preset/models/ram_swin_large_14m.pth
+ram_ft_path: preset/models/DAPE.pth
+
+# ---------------------------------------------------------------- Data & output
+root_folders: preset/datasets/train_datasets/LSDIR
+output_dir: preset/train_output/segesr_ablation_no_sam_loss
+resolution: 512
+null_text_ratio: 0.5
+dataloader_num_workers: 0
+
+# ---------------------------------------------------------------- Optimization
+learning_rate: 2.0e-7
+finetune_lr: 5.0e-7
+lr_scheduler: constant_with_warmup
+lr_warmup_steps: 500
+train_batch_size: 1
+gradient_accumulation_steps: 4
+max_train_steps: 30000
+checkpointing_steps: 3500
+resume_from_checkpoint: latest
+mixed_precision: bf16
+gradient_checkpointing: true
+use_8bit_adam: true
+allow_tf32: true
+enable_xformers_memory_efficient_attention: true
+
+# ---------------------------------------------------------------- Validation
+validation_steps: 100
+validation_image: preset/datasets/test_datasets/RealSR/test_LR/Canon_004_LR4.png
+generate_validation_image: true
+
+# ---------------------------------------------------------------- Trainable modules
+train_controlnet_dape_attention: true
+train_controlnet_sam_image_attention: true
+train_controlnet_sam_segmentation_attention: true
+train_controlnet_fusion_conv: true
+train_unet_dape_attention: true
+train_unet_sam_image_attention: true
+train_unet_sam_segmentation_attention: true
+train_unet_fusion_conv: true
+init_sam_from_dape: true
+
+# ---------------------------------------------------------------- SAM 2 conditioning & losses
+use_sam: true
+sam_model_size: large
+use_sam_loss: false
+use_lpips_loss: false

@@ -45,7 +45,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import StableDiffusionS
 from diffusers.pipelines.controlnet.multicontrolnet import MultiControlNetModel
 
 
-from utils.vaehook import VAEHook, perfcount
+from segesr.pipelines.vaehook import VAEHook, perfcount
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -1134,8 +1134,8 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                                     guess_mode=guess_mode,
                                     return_dict=False,
                                     image_encoder_hidden_states = ram_encoder_hidden_states,
-                                    # sam2_encoder_hidden_states=sam2_encoder_hidden_states,
-                                    sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states
+                                    sam2_encoder_hidden_states=sam2_encoder_hidden_states,
+                                    sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
                                 )
 
                                 if guess_mode and do_classifier_free_guidance:

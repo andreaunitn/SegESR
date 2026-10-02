@@ -5,16 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "segesr"
 version = "0.1.0"
-description = "SegESR: Segment Anything Model for Real-World Super-Resolution"
+description = "SegESR: Segmentation Enhanced Super-Resolution"
 readme = "README.md"
-requires-python = ">=3.8"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
 dependencies = [
     "torch",
     "diffusers>=0.21.0",
     "transformers",
     "accelerate",
+    "pyyaml",
 ]
 
+# `segesr` lives in the repository root, while the vendored `ram` and `basicsr` packages live in
+# `third_party/` and import themselves as top-level packages (e.g. `from basicsr.utils import ...`).
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["segesr*", "third_party*"]
+where = [".", "third_party"]
+include = ["segesr*", "ram*", "basicsr*"]
+
+[tool.setuptools.package-data]
+ram = ["configs/*.json", "configs/swin/*.json", "data/*.txt"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "third_party"]

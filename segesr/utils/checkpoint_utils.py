@@ -63,6 +63,8 @@ def save_model_card(repo_id, image_logs=None, base_model="", repo_folder=""):
     Generates a README.md model card for the Hugging Face Hub repository.
     """
 
+    os.makedirs(repo_folder, exist_ok=True)
+
     img_str = ""
     if image_logs is not None:
         img_str = "You can find some example images below.\n"
@@ -83,27 +85,27 @@ def save_model_card(repo_id, image_logs=None, base_model="", repo_folder=""):
             grid.save(os.path.join(repo_folder, f"images_{i}.png"))
             img_str += f"![images_{i}](./images_{i}.png)\n"
 
-    yaml = f"""---
-            license: creativeml-openrail-m
-            base_model: {base_model}
-            tags:
-            - stable-diffusion
-            - stable-diffusion-diffusers
-            - text-to-image
-            - diffusers
-            - controlnet
-            - segesr
-            inference: true
-            ---
-            """
+    # The YAML front matter must start at column 0 to be parsed by the Hub
+    yaml = (
+        "---\n"
+        "license: creativeml-openrail-m\n"
+        f"base_model: {base_model}\n"
+        "tags:\n"
+        "- stable-diffusion\n"
+        "- stable-diffusion-diffusers\n"
+        "- text-to-image\n"
+        "- diffusers\n"
+        "- controlnet\n"
+        "- segesr\n"
+        "inference: true\n"
+        "---\n"
+    )
 
-    model_card = f"""
-                # controlnet-{repo_id}
+    model_card = (
+        f"\n# controlnet-{repo_id}\n\n"
+        f"These are SegESR ControlNet weights trained on top of {base_model}.\n"
+        f"{img_str}\n"
+    )
 
-                These are SegESR ControlNet weights trained on top of {base_model}.
-                {img_str}
-                """
-
-    os.makedirs(repo_folder, exist_ok=True)
     with open(os.path.join(repo_folder, "README.md"), "w") as f:
         f.write(yaml + model_card)

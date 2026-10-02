@@ -1,0 +1,62 @@
+# SegESR training configuration.
+# Usage: accelerate launch train.py --config configs/train_default.yaml [--any_flag value ...]
+# Keys are train.py argument names; flags given on the command line override this file.
+
+# ---------------------------------------------------------------- Models
+pretrained_model_name_or_path: preset/models/stable-diffusion-2-base
+seesr_model_path: preset/models/seesr              # SeeSR checkpoint ('unet/' + 'controlnet/')
+controlnet_model_name_or_path: preset/models/seesr
+# unet_model_name_or_path: preset/train_output/segesr/checkpoint-XXXX   # to continue from a SegESR checkpoint
+tiny_vae_path: preset/models/tiny_vae
+ram_path: preset/models/ram_swin_large_14m.pth
+ram_ft_path: preset/models/DAPE.pth
+
+# ---------------------------------------------------------------- Data & output
+root_folders: preset/datasets/train_datasets/LSDIR
+# validation_data_dir: preset/datasets/val_datasets/LSDIR
+output_dir: preset/train_output/segesr
+resolution: 512
+null_text_ratio: 0.5
+dataloader_num_workers: 0
+
+# ---------------------------------------------------------------- Optimization
+learning_rate: 2.0e-7          # pre-existing SeeSR modules
+finetune_lr: 5.0e-7            # new modules (fusion convs + SAM 2 attentions)
+lr_scheduler: constant_with_warmup
+lr_warmup_steps: 500
+train_batch_size: 1            # SAM 2 segmentation embeddings have a variable number of masks
+gradient_accumulation_steps: 4
+max_train_steps: 30000
+checkpointing_steps: 3500
+resume_from_checkpoint: latest
+mixed_precision: bf16
+gradient_checkpointing: true
+use_8bit_adam: true
+allow_tf32: true
+enable_xformers_memory_efficient_attention: true
+
+# ---------------------------------------------------------------- Validation
+validation_steps: 100
+validation_image: preset/datasets/test_datasets/RealSR/test_LR/Canon_004_LR4.png
+generate_validation_image: true
+
+# ---------------------------------------------------------------- Trainable modules
+train_controlnet_dape_attention: true
+train_controlnet_sam_image_attention: true
+train_controlnet_sam_segmentation_attention: true
+train_controlnet_fusion_conv: true
+train_unet_dape_attention: true
+train_unet_sam_image_attention: true
+train_unet_sam_segmentation_attention: true
+train_unet_fusion_conv: true
+# Copy DAPE attention weights into the SAM 2 attentions. Only when starting from SeeSR:
+# set it to false when loading a checkpoint whose SAM 2 attentions are already trained.
+init_sam_from_dape: true
+
+# ---------------------------------------------------------------- SAM 2 conditioning & losses
+use_sam: true
+sam_model_size: large
+use_sam_loss: true
+sam_loss_weight: 0.1
+use_lpips_loss: false
+lpips_loss_weight: 0.1

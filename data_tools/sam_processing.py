@@ -1,153 +1,99 @@
 import argparse
 import glob
 import os
+import sys
 from pathlib import Path
 from PIL import Image
 from tqdm import tqdm
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
-import sam2.build_sam as build_sam2
-from sam2.automatic_mask_generator import SAM2AutomaticMaskGenerator
+# Make `segesr` and the vendored packages importable without installation
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+for _path in (PROJECT_ROOT, PROJECT_ROOT / "third_party"):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 
-SAM_CONFIG = {
-    "tiny": {
-        "config": "sam2_hiera_t.yaml",
-        "checkpoint": "preset/models/sam2_hiera_tiny.pt",
-    },
-    "small": {
-        "config": "sam2_hiera_s.yaml",
-        "checkpoint": "preset/models/sam2_hiera_small.pt",
-    },
-    "base_plus": {
-        "config": "sam2_hiera_b+.yaml",
-        "checkpoint": "preset/models/sam2_hiera_base_plus.pt",
-    },
-    "large": {
-        "config": "sam2_hiera_l.yaml",
-        "checkpoint": "preset/models/sam2_hiera_large.pt",
-    },
-}
+from segesr.utils.sam_utils import compute_sam2_conditions, load_sam2, sam2_autocast
 
-def load(apply_postprocessing=False, stability_score_thresh=0.9, model_size="large", checkpoint_path=None, config_file=None, device=None, **kwargs):
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
+
+def process_dataset(args):
     """
-    Initializes SAM 2 and returns an automatic mask generator whose
-    .predictor.model.image_encoder provides the vision embeddings used by SegESR.
+    Precomputes the SAM 2 data used by SegESR for all images inside `--image_dir`:
 
-    Args:
-        apply_postprocessing (bool): Whether to apply postprocessing to masks.
-        stability_score_thresh (float): Threshold for mask stability filtering.
-        model_size (str): One of ['tiny', 'small', 'base_plus', 'large'].
-        checkpoint_path (str, optional): Custom path to .pt weights file.
-        config_file (str, optional): Custom config YAML filename.
-        device (str, optional): Computation device ('cuda' or 'cpu').
+    - `--embed_dir`: Hiera image embeddings, (1, 256, 64, 64) per image  -> training folder 'sam_embeds/'
+    - `--logit_dir`: mask decoder logits, (N, 1, 256, 256) per image   -> training folder 'seg_embeds/'
+    - `--mask_dir`:  binary masks, (N, H, W) per image                  -> training folder 'gt_seg/' (optional)
+
+    Embeddings and logits are computed on the bicubic-upsampled LR images ('sr_bicubic/'),
+    binary masks on the GT images ('gt/').
     """
 
-    if device is None:
-        device = "cuda" if torch.cuda.is_available() else "cpu"
+    output_dirs = [args.embed_dir, args.logit_dir, args.mask_dir]
+    if not any(output_dirs):
+        raise ValueError("Specify at least one output directory (--embed_dir, --logit_dir or --mask_dir).")
 
-    cfg_entry = SAM_CONFIG.get(model_size, SAM_CONFIG["large"])
-    resolved_config = config_file or cfg_entry["config"]
-    resolved_ckpt = checkpoint_path or cfg_entry["checkpoint"]
+    for path in output_dirs:
+        if path:
+            os.makedirs(path, exist_ok=True)
 
-    if not os.path.isfile(resolved_ckpt):
-        # Fallback to local filename check
-        alt_ckpt = os.path.join("preset", "models", os.path.basename(resolved_ckpt))
-        if os.path.isfile(alt_ckpt):
-            resolved_ckpt = alt_ckpt
-
-    sam_model = build_sam2(
-        config_file=resolved_config,
-        ckpt_path=resolved_ckpt if os.path.isfile(resolved_ckpt) else None,
-        device=device,
-        **kwargs,
+    image_paths = sorted(
+        p for p in glob.glob(os.path.join(args.image_dir, "*")) if p.lower().endswith(IMAGE_EXTENSIONS)
     )
 
-    mask_generator = SAM2AutomaticMaskGenerator(
-        model=sam_model,
-        apply_postprocessing=apply_postprocessing,
-        stability_score_thresh=stability_score_thresh,
-        output_mode="binary_mask",
+    if args.skip_existing:
+        def is_done(stem):
+            return all(os.path.isfile(os.path.join(d, f"{stem}.pt")) for d in output_dirs if d)
+        image_paths = [p for p in image_paths if not is_done(Path(p).stem)]
+
+    sam_generator = load_sam2(
+        model_size=args.model_size,
+        points_per_side=args.points_per_side,
+        points_per_batch=args.points_per_batch,
+        stability_score_thresh=args.stability_score_thresh,
     )
 
-    return mask_generator
+    print(f"Processing {len(image_paths)} images from '{args.image_dir}' with SAM 2.1 ({args.model_size})...")
 
-def extract_features_and_masks(mask_generator, image_rgb, device="cuda"):
-    """
-    Extracts:
-    1. sam_img_embeds: Vision encoder embeddings from the Hiera image encoder.
-    2. sam_seg_embeds: Multi-region layout mask tensor.
-    """
-
-    image_np = np.array(image_rgb)
-    orig_h, orig_w = image_np.shape[:2]
-
-    # 1. Extract image features via the internal predictor
-    predictor = mask_generator.predictor
-    predictor.set_image(image_np)
-
-    # Fetch high-level vision features from predictor state
-    if hasattr(predictor, "_features") and predictor._features is not None:
-        img_embeds = predictor._features["image_embed"].cpu()
-    else:
-        from torchvision import transforms
-        norm = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-
-        t_img = norm(image_rgb).unsqueeze(0).to(device)
-        with torch.no_grad():
-            img_embeds = predictor.model.image_encoder(t_img)["vision_features"].cpu()
-
-    # 2. Extract and compile masks
-    masks = mask_generator.generate(image_np)
-    if len(masks) == 0:
-        # Fallback empty mask representation (1, 64, 64)
-        seg_embeds = torch.zeros((1, 64, 64), dtype=torch.float32)
-    else:
-        # Sort masks by area descending
-        sorted_masks = sorted(masks, key=lambda m: m["area"], reverse=True)
-        binary_masks = [torch.from_numpy(m["segmentation"]).float() for m in sorted_masks[:16]]
-        stacked_masks = torch.stack(binary_masks, dim=0).unsqueeze(0) # (1, N, H, W)
-
-        # Downsample to latent spatial resolution (64x64)
-        seg_embeds = F.interpolate(stacked_masks, size=(64,64), mode="nearest").squeeze(0)
-
-    return img_embeds, seg_embeds
-
-def process_dataset(input_dir, save_dir, model_size="large", extension="png"):
-    """
-    Extracts and stores SAM 2 image embeddings and segmentation masks
-    for all images inside input_dir.
-    """
-
-    os.makedirs(os.path.join(save_dir, "sam_img_embeds"), exist_ok=True)
-    os.makedirs(os.path.join(save_dir, "sam_seg_embeds"), exist_ok=True)
-
-    mask_generator = load(model_size=model_size, apply_postprocessing=False, stability_score_thresh=0.9)
-    image_paths = sorted(glob.glob(os.path.join(input_dir, f"*.{extension}")))
-
-    print(f"Processing {len(image_paths)} images from '{input_dir}' with SAM 2 ({model_size})...")
-
-    for img_path in tqdm(image_paths, desc="Generating SAM 2 Embeddings"):
+    for img_path in tqdm(image_paths, desc="Generating SAM 2 data"):
         stem = Path(img_path).stem
-        img = Image.open(img_path).convert("RGB")
+        image = Image.open(img_path).convert("RGB")
 
-        img_embeds, seg_embeds = extract_features_and_masks(mask_generator, img)
-        torch.save(img_embeds, os.path.join(save_dir, "sam_img_embeds", f"{stem}.pt"))
-        torch.save(seg_embeds, os.path.join(save_dir, "sam_seg_embeds", f"{stem}.pt"))
+        if args.embed_dir or args.logit_dir:
+            img_embeds, seg_logits = compute_sam2_conditions(image, sam_generator, max_masks=args.max_seg)
 
-    print(f"Finished processing! Embeddings saved to '{save_dir}'.")
+            if args.embed_dir:
+                torch.save(img_embeds, os.path.join(args.embed_dir, f"{stem}.pt"))
+            if args.logit_dir:
+                torch.save(seg_logits, os.path.join(args.logit_dir, f"{stem}.pt"))
+
+        if args.mask_dir:
+            image_np = np.array(image)
+            with torch.no_grad(), sam2_autocast(sam_generator):
+                masks = sam_generator.generate(image_np)
+            masks = sorted(masks, key=lambda m: m["area"], reverse=True)[:args.max_seg]
+
+            if masks:
+                binary_masks = torch.stack([torch.from_numpy(m["segmentation"]) for m in masks])
+            else:
+                binary_masks = torch.empty(0, *image_np.shape[:2], dtype=torch.bool)
+            torch.save(binary_masks, os.path.join(args.mask_dir, f"{stem}.pt"))
+
+    print("Processing complete.")
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Extract SAM 2 embeddings and segmentations for SegESR")
-    parser.add_argument("--input_dir", type=str, required=True, help="Directory containing RGB images")
-    parser.add_argument("--save_dir", type=str, required=True, help="Output directory to save embeddings")
+    parser = argparse.ArgumentParser(description="Extract SAM 2 embeddings, mask logits and masks for SegESR.")
+    parser.add_argument("--image_dir", type=str, required=True, help="Directory containing the RGB images.")
+    parser.add_argument("--embed_dir", type=str, default=None, help="Output directory of the image embeddings ('sam_embeds').")
+    parser.add_argument("--logit_dir", type=str, default=None, help="Output directory of the mask decoder logits ('seg_embeds').")
+    parser.add_argument("--mask_dir", type=str, default=None, help="Output directory of the binary masks ('gt_seg').")
     parser.add_argument("--model_size", type=str, default="large", choices=["tiny", "small", "base_plus", "large"])
-    parser.add_argument("--extension", type=str, default="png", help="Image file extension")
+    parser.add_argument("--max_seg", type=int, default=150, help="Maximum number of masks kept per image, sorted by area.")
+    parser.add_argument("--points_per_side", type=int, default=16, help="Points per side for mask generation grid.")
+    parser.add_argument("--points_per_batch", type=int, default=128, help="Points processed in a batch for mask generation.")
+    parser.add_argument("--stability_score_thresh", type=float, default=0.9, help="Stability score threshold for filtering masks.")
+    parser.add_argument("--skip_existing", action="store_true", help="Skip images whose outputs already exist.")
 
-    args = parser.parse_args()
-    process_dataset(args.input_dir, args.save_dir, model_size=args.model_size, extension=args.extension)
+    process_dataset(parser.parse_args())

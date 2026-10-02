@@ -1,14 +1,28 @@
 import glob
 import os
+from pathlib import Path
 from PIL import Image
 import random
 
 import torch
 from torchvision import transforms
 from torch.utils import data as data
-import torch.nn.functional as F
 
 class PairedCaptionDataset(data.Dataset):
+    """
+    Paired training dataset. Every root folder must contain, for each GT image stem:
+
+        gt/<stem>.png            ground-truth image
+        sr_bicubic/<stem>.png    bicubic-upsampled LR image (ControlNet condition)
+        tag/<stem>.txt           tag prompt
+        dape_embeds/<stem>.pt    DAPE image embeddings
+        sam_embeds/<stem>.pt     SAM 2 image embeddings (1, 256, 64, 64)
+        seg_embeds/<stem>.pt     SAM 2 mask decoder logits (N, 1, 256, 256)
+        gt_seg/<stem>.pt         (optional) SAM 2 binary masks of the GT image
+
+    Files are matched by stem, so the per-folder listing order does not matter.
+    """
+
     def __init__(
             self,
             root_folders=None,
@@ -22,46 +36,44 @@ class PairedCaptionDataset(data.Dataset):
         self.lr_list = []
         self.gt_list = []
         self.tag_path_list = []
-        self.sam2_img_embeds_list = []
-        self.sam2_seg_emebds_list = []
+        self.sam_img_embeds_list = []
+        self.sam_seg_embeds_list = []
         self.dape_img_embeds_list = []
         self.gt_seg_list = []
 
         self.validation = validation
-        
+
         if self.validation:
             self.val_list = []
 
-        root_folders = root_folders.split(',')
+        if isinstance(root_folders, str):
+            root_folders = [folder for folder in root_folders.split(',') if folder]
+
         for root_folder in root_folders:
-            lr_path = root_folder + '/sr_bicubic'
-            tag_path = root_folder + '/tag'
-            gt_path = root_folder + '/gt'
-            sam2_img_embeds_path = root_folder + '/sam_embeds'
-            sam2_seg_embeds_path = root_folder + '/seg_embeds'
-            dape_img_embeds_path = root_folder + '/dape_embeds'
-            gt_seg_path = root_folder + '/gt_seg'
+            gt_paths = sorted(glob.glob(os.path.join(root_folder, 'gt', '*.png')))
+            gt_seg_dir = os.path.join(root_folder, 'gt_seg')
+            has_gt_seg = os.path.isdir(gt_seg_dir)
+
+            for gt_path in gt_paths:
+                stem = Path(gt_path).stem
+                self.gt_list.append(gt_path)
+                self.lr_list.append(self._require(root_folder, 'sr_bicubic', stem, '.png'))
+                self.tag_path_list.append(self._require(root_folder, 'tag', stem, '.txt'))
+                self.dape_img_embeds_list.append(self._require(root_folder, 'dape_embeds', stem, '.pt'))
+                self.sam_img_embeds_list.append(self._require(root_folder, 'sam_embeds', stem, '.pt'))
+                self.sam_seg_embeds_list.append(self._require(root_folder, 'seg_embeds', stem, '.pt'))
+
+                if has_gt_seg:
+                    self.gt_seg_list.append(self._require(root_folder, 'gt_seg', stem, '.pt'))
 
             if self.validation:
-                val_path = root_folder + '/validation/HR/val'
+                self.val_list += sorted(glob.glob(os.path.join(root_folder, 'validation', 'HR', 'val', '*.png')))
 
-            self.lr_list += glob.glob(os.path.join(lr_path, '*.png'))
-            self.gt_list += glob.glob(os.path.join(gt_path, '*.png'))
-            self.tag_path_list += glob.glob(os.path.join(tag_path, '*.txt'))
-            self.sam2_img_embeds_list += glob.glob(os.path.join(sam2_img_embeds_path, '*.pt'))
-            self.sam2_seg_emebds_list += glob.glob(os.path.join(sam2_seg_embeds_path, '*.pt'))
-            self.dape_img_embeds_list += glob.glob(os.path.join(dape_img_embeds_path, '*.pt'))
-            self.gt_seg_list += glob.glob(os.path.join(gt_seg_path, '*.pt'))
+        if len(self.gt_list) == 0:
+            raise ValueError(f"No GT images found in {[os.path.join(f, 'gt') for f in root_folders]}")
 
-            if self.validation:
-                self.val_list += glob.glob(os.path.join(val_path, '*.png'))
-
-        assert len(self.lr_list) == len(self.gt_list)
-        assert len(self.lr_list) == len(self.tag_path_list)
-        assert len(self.lr_list) == len(self.sam2_img_embeds_list)
-        assert len(self.lr_list) == len(self.sam2_seg_emebds_list)
-        assert len(self.lr_list) == len(self.dape_img_embeds_list)
-        assert len(self.lr_list) == len(self.gt_seg_list)
+        if self.gt_seg_list and len(self.gt_seg_list) != len(self.gt_list):
+            raise ValueError("'gt_seg' exists only for some of the root folders. Provide it for all of them or for none.")
 
         self.img_preproc = transforms.Compose([
             transforms.ToTensor(),
@@ -72,6 +84,13 @@ class PairedCaptionDataset(data.Dataset):
         self.ram_normalize = transforms.Normalize(mean=ram_mean, std=ram_std)
 
         self.tokenizer = tokenizer
+
+    @staticmethod
+    def _require(root_folder, sub_dir, stem, ext):
+        path = os.path.join(root_folder, sub_dir, stem + ext)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"Missing '{path}' (expected one '{sub_dir}/*{ext}' file for every GT image).")
+        return path
 
     def tokenize_caption(self, caption=""):
         inputs = self.tokenizer(
@@ -85,7 +104,7 @@ class PairedCaptionDataset(data.Dataset):
         gt_path = self.gt_list[index]
         gt_img = Image.open(gt_path).convert('RGB')
         gt_img = self.img_preproc(gt_img)
-        
+
         lq_path = self.lr_list[index]
         lq_img = Image.open(lq_path).convert('RGB')
         lq_img = self.img_preproc(lq_img)
@@ -98,20 +117,20 @@ class PairedCaptionDataset(data.Dataset):
         if random.random() < self.null_text_ratio:
             tag = ''
         else:
-            tag_path = self.tag_path_list[index]
-            file = open(tag_path, 'r')
-            tag = file.read()
-            file.close()
+            with open(self.tag_path_list[index], 'r') as file:
+                tag = file.read()
 
         example = dict()
         example["conditioning_pixel_values"] = lq_img.squeeze(0)
         example["pixel_values"] = gt_img.squeeze(0) * 2.0 - 1.0
         example["input_ids"] = self.tokenize_caption(caption=tag).squeeze(0)
 
-        example["ram_values"] = torch.load(self.dape_img_embeds_list[index]).squeeze(0)
-        example["sam2_img_embeds"] = torch.load(self.sam2_img_embeds_list[index]).squeeze(0)
-        example["sam2_seg_embeds"] = torch.load(self.sam2_seg_emebds_list[index]).squeeze(1)
-        example["sam2_gt_seg"] = torch.load(self.gt_seg_list[index])
+        example["ram_values"] = torch.load(self.dape_img_embeds_list[index], map_location="cpu").squeeze(0)
+        example["sam_img_embeds"] = torch.load(self.sam_img_embeds_list[index], map_location="cpu").squeeze(0)
+        example["sam_seg_embeds"] = torch.load(self.sam_seg_embeds_list[index], map_location="cpu").squeeze(1)
+
+        if self.gt_seg_list:
+            example["sam_gt_seg"] = torch.load(self.gt_seg_list[index], map_location="cpu")
 
         if self.validation:
             example["val_pixel_values"] = val_img.squeeze(0) * 2.0 - 1.0

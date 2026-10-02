@@ -28,6 +28,11 @@ def unfreeze_params(model, model_name, target_suffix, exclude_keywords=None):
             logger.info(f"  - {name}")
             trainable_found = True
 
+    if not trainable_found:
+        logger.warning(f"No modules in {model_name} matched '{target_suffix}' (excluding {exclude_keywords}). Nothing was unfrozen.")
+
+    return trainable_found
+
 def init_sam_weights(model, accelerator, attention_modules):
     """
     Initializes target SAM 2 attention modules (image or segmentation) by copying
@@ -67,7 +72,7 @@ def init_sam_weights(model, accelerator, attention_modules):
     for block_name, block in model_to_copy.named_modules():
         is_relevant_block = isinstance(block, (CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn))
 
-        if is_relevant_block and hasattr(block, "use_sam") and block.use_sam:
+        if is_relevant_block and getattr(block, "use_sam2", False):
             if not hasattr(block, "image_attentions"):
                 logger.warning(f"  - Block {block_name} is SAM2 enabled but has no 'image_attentions' to copy from. Skipping.")
                 continue
@@ -93,19 +98,23 @@ def verify_weights(model, accelerator, attention_modules):
     """
     Verifies that target SAM 2 attention modules have been correctly
     initialized from the DAPE attention modules.
+
+    Returns:
+        bool | None: whether verification passed (None on non-main processes).
     """
 
     if not accelerator.is_main_process:
-        return
+        return None
 
     logger.info(f"--- STARTING WEIGHT VERIFICATION FOR {model.__class__.__name__} ---")
     verification_passed = True
+    num_verified_modules = 0
 
     unwrapped_model = accelerator.unwrap_model(model)
-    for block in unwrapped_model.named_modules():
-        is_relevant_block = isinstance(block, CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn)
+    for _, block in unwrapped_model.named_modules():
+        is_relevant_block = isinstance(block, (CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn))
 
-        if is_relevant_block and hasattr(block, "image_attentions"):
+        if is_relevant_block and getattr(block, "use_sam2", False) and hasattr(block, "image_attentions"):
             source_attns = block.image_attentions
 
             for target_attr_name in attention_modules:
@@ -120,6 +129,7 @@ def verify_weights(model, accelerator, attention_modules):
 
                         source_params = dict(source_transformer.named_parameters())
                         target_params = dict(target_transformer.named_parameters())
+                        num_verified_modules += 1
 
                         for param_name, target_param in target_params.items():
                             if param_name not in source_params:
@@ -152,6 +162,9 @@ def verify_weights(model, accelerator, attention_modules):
                                 logger.error(f"  - FAILED: Verification for '{param_name}' in '{full_target_name}'. "f"Max absolute difference: {diff:.6f}")
                                 verification_passed = False
 
+    if num_verified_modules == 0:
+        logger.error(f"  - FAILED: No SAM 2 attention modules matching {attention_modules} were found.")
+        verification_passed = False
 
     if verification_passed:
         logger.info("--- OVERALL VERIFICATION RESULT: PASSED ---")
@@ -159,3 +172,5 @@ def verify_weights(model, accelerator, attention_modules):
         logger.error("--- OVERALL VERIFICATION RESULT: FAILED ---")
 
     logger.info(f"--- WEIGHT VERIFICATION COMPLETE FOR {model.__class__.__name__} ---")
+
+    return verification_passed
