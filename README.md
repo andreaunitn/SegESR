@@ -142,7 +142,8 @@ Every key of the YAML config is a `train.py` argument, and flags passed on the c
 
 ```bash
 sbatch cluster/setup_env.sh                                   # once: container, packages, SAM 2.1 weights, tests
-sbatch cluster/download.sh                                    # once: models, test sets, LSDIR + FFHQ training subset
+sbatch cluster/download_models.sh                             # once: SD 2 base, SeeSR + DAPE, RAM, tiny VAE
+sbatch cluster/download_datasets.sh                           # once: test sets, LSDIR + FFHQ training subset
 sbatch cluster/prepare_data.sh preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
 sbatch cluster/train.sh configs/train_default.yaml --output_dir=preset/train_output/segesr_v2
 sbatch cluster/test.sh preset/train_output/segesr_v2
@@ -150,7 +151,7 @@ sbatch cluster/test.sh preset/train_output/segesr_v2
 
 Edit the `#SBATCH` lines (partition, QOS, memory) for another cluster.
 
-`data_tools/download_data.py` (run by `cluster/download.sh`, or directly) downloads everything into `preset/` except RealLR200, which is only on [Google Drive](https://drive.google.com/drive/folders/1L2VsQYQRKhWJxe6yWZU9FgBWSgBCk6mz). LSDIR is gated: accept its terms at [huggingface.co/ofsoundof/LSDIR](https://huggingface.co/ofsoundof/LSDIR) and save a read token in `~/.cache/huggingface/token` first. The full LSDIR (~155 GB) is kept in `preset/datasets/LSDIR_full` unless `--delete_full_lsdir` is passed.
+`data_tools/download_data.py` (run by `cluster/download_models.sh` and `cluster/download_datasets.sh`, or directly) downloads everything into `preset/` except RealLR200, which is only on [Google Drive](https://drive.google.com/drive/folders/1L2VsQYQRKhWJxe6yWZU9FgBWSgBCk6mz). LSDIR is gated: accept its terms at [huggingface.co/ofsoundof/LSDIR](https://huggingface.co/ofsoundof/LSDIR) and save a read token in `~/.cache/huggingface/token` first. The full LSDIR (~155 GB) is kept in `preset/datasets/LSDIR_full` unless `--delete_full_lsdir` is passed.
 
 ## 📜 Credits & Acknowledgments
 This project is built upon the excellent research of **SeeSR** and **SAM 2**.
