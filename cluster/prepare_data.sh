@@ -9,7 +9,7 @@
 # Builds the SegESR training folder (scripts/prepare_data.sh) on the cluster.
 #
 # Usage (from the repository root):
-#   sbatch cluster/prepare_data.sbatch GT_DIR [SAVE_DIR]
+#   sbatch cluster/prepare_data.sh GT_DIR [SAVE_DIR]
 # Environment variables of scripts/prepare_data.sh (RAM_FT_PATH, EPOCHS, WITH_GT_SAM, WITH_GT_SEG) are passed through.
 
 set -euo pipefail

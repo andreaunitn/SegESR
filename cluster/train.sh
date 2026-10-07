@@ -10,8 +10,8 @@
 # Trains SegESR (scripts/run_train.sh) on the cluster.
 #
 # Usage (from the repository root):
-#   sbatch cluster/train.sbatch [CONFIG] [extra train.py flags...]
-#   e.g. sbatch cluster/train.sbatch configs/train_default.yaml --output_dir=preset/train_output/segesr_v2
+#   sbatch cluster/train.sh [CONFIG] [extra train.py flags...]
+#   e.g. sbatch cluster/train.sh configs/train_default.yaml --output_dir=preset/train_output/segesr_v2
 #
 # The configs resume from the latest checkpoint of `output_dir`, so if the job hits the time limit of
 # the partition, submitting the same command again continues the training.

@@ -9,8 +9,8 @@
 # Runs inference + metrics on every checkpoint of a training run (scripts/run_test.sh) on the cluster.
 #
 # Usage (from the repository root):
-#   sbatch cluster/test.sbatch [CHECKPOINT_BASE_DIR] [CONFIG]
-#   e.g. DATASETS="RealSR DRealSR" sbatch cluster/test.sbatch preset/train_output/segesr_v2
+#   sbatch cluster/test.sh [CHECKPOINT_BASE_DIR] [CONFIG]
+#   e.g. DATASETS="RealSR DRealSR" sbatch cluster/test.sh preset/train_output/segesr_v2
 # Metrics are written to metrics/<dataset>/results_<checkpoint>.json.
 
 set -euo pipefail

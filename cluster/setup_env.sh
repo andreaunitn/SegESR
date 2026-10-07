@@ -10,7 +10,7 @@
 # virtual environment on top of it (reusing the container's torch), installs the dependencies,
 # downloads the SAM 2.1 weights and runs the test suite.
 #
-# Usage (from the repository root): sbatch cluster/setup_env.sbatch
+# Usage (from the repository root): sbatch cluster/setup_env.sh
 # Safe to re-run: existing container image and virtual environment are reused.
 
 set -euo pipefail
