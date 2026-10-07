@@ -37,7 +37,7 @@ check_min_version("0.21.0.dev0")
 
 from ram.models.ram_lora import ram
 
-from segesr.dataloaders.paired_dataset import PairedCaptionDataset
+from segesr.dataloaders.paired_dataset import PairedCaptionDataset, collate_fn
 from segesr.losses import LPIPSLoss, SamPerceptualLoss
 from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
@@ -430,6 +430,21 @@ def parse_args(input_args=None):
         help="SAM 2.1 model used for the perceptual loss and the validation sample. Must match the one used to precompute the embeddings.",
     )
     parser.add_argument(
+        "--segment_routing",
+        action="store_true",
+        help="Restrict the SAM 2 segmentation attention of each latent pixel to the segments covering it.",
+    )
+    parser.add_argument(
+        "--clean_sam_prob",
+        type=float,
+        default=0.0,
+        help=(
+            "Maximum probability of conditioning a sample on the SAM 2 conditions of its GT image instead of its LR"
+            " image. It decreases linearly with the timestep (clean_sam_prob at t=0, 0 at t=T), matching the SAM 2"
+            " refresh on the predicted clean image at inference. Requires the 'sam_embeds_gt/' and 'seg_embeds_gt/' folders."
+        ),
+    )
+    parser.add_argument(
         "--use_sam_loss",
         action="store_true",
         help="Add the SAM 2 perceptual loss to the diffusion loss."
@@ -465,6 +480,9 @@ def parse_args(input_args=None):
             "The SegESR UNet/ControlNet blocks always run the SAM 2 attentions, so `--use_sam` is required "
             "(and the 'sam_embeds/' and 'seg_embeds/' data folders)."
         )
+
+    if not 0.0 <= args.clean_sam_prob <= 1.0:
+        raise ValueError("`--clean_sam_prob` must be in [0, 1].")
 
     if (args.use_sam_loss or args.use_lpips_loss) and args.tiny_vae_path is None:
         raise ValueError("`--tiny_vae_path` is required by `--use_sam_loss` and `--use_lpips_loss`.")
@@ -758,11 +776,15 @@ def main(args):
         null_text_ratio=args.null_text_ratio,
     )
 
+    if args.clean_sam_prob > 0 and not train_dataset.has_gt_sam:
+        raise ValueError("`--clean_sam_prob` > 0 requires the 'sam_embeds_gt/' and 'seg_embeds_gt/' training folders.")
+
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
         num_workers=args.dataloader_num_workers,
         batch_size=args.train_batch_size,
         shuffle=True,
+        collate_fn=collate_fn,
     )
 
     # Validation runs on the main process only, so its dataloader is not sharded by `accelerator.prepare`
@@ -780,6 +802,7 @@ def main(args):
             num_workers=args.dataloader_num_workers,
             batch_size=args.train_batch_size,
             shuffle=False,
+            collate_fn=collate_fn,
         )
     # endregion
 
@@ -907,7 +930,15 @@ def main(args):
                     encoder_hidden_states = text_encoder(batch["input_ids"].to(accelerator.device))[0]
                 controlnet_image = batch["conditioning_pixel_values"].to(accelerator.device, dtype=weight_dtype)
                 ram_encoder_hidden_states = batch["ram_values"].to(accelerator.device, dtype=weight_dtype)
-                sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, args.use_sam)
+
+                # At low noise levels, sometimes condition on the SAM 2 outputs of the clean image
+                use_clean_sam = None
+                if args.clean_sam_prob > 0:
+                    clean_prob = args.clean_sam_prob * (1.0 - timesteps.float() / noise_scheduler.config.num_train_timesteps)
+                    use_clean_sam = torch.rand(bsz, device=latents.device) < clean_prob
+
+                sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, args.use_sam, mask_size=latents.shape[-2:],
+                                            segment_routing=args.segment_routing, use_clean=use_clean_sam)
 
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,

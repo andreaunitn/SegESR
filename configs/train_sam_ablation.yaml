@@ -52,5 +52,7 @@ init_sam_from_dape: true
 # ---------------------------------------------------------------- SAM 2 conditioning & losses
 use_sam: true
 sam_model_size: large
+segment_routing: true
+clean_sam_prob: 0.5
 use_sam_loss: false
 use_lpips_loss: false

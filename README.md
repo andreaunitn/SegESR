@@ -18,7 +18,8 @@ Unlike traditional super-resolution methods, SegESR integrates segmentation-awar
 
 * **SAM 2-Guided Generation**: Introduced two new semantic priors derived from SAM 2:
     * **SICA (SAM Image Cross-Attention)**: Leverages SAM 2 image embeddings from the [Hiera Encoder](https://huggingface.co/docs/transformers/model_doc/hiera).
-    * **SMCA (SAM Masks Cross-Attention)**: Utilizes SAM 2 segmentation embeddings to preserve object boundaries and details.
+    * **SMCA (SAM Masks Cross-Attention)**: Every SAM 2 segment becomes one token (the Hiera embedding averaged inside its mask), so the condition does not depend on the order or the number of masks. Each latent pixel attends only to the segments covering it (*segment routing*), which preserves object boundaries and details.
+* **Closed-loop SAM 2 conditions**: At inference, the SAM 2 conditions are recomputed on the predicted clean image at a few timesteps (`sam_refresh_timesteps`), instead of relying only on masks extracted from the degraded LR input. During training, low-noise samples are conditioned on the SAM 2 outputs of the GT image with probability `clean_sam_prob · (1 - t/T)` to match it.
 * **Parallelized PAFB Architecture**: Introduced the *Parallel Attention Fusion Block (PAFB)*. Text, image embeddings and segmentation embeddings are now processed in **parallel** and fused via a trainable convolutional layer, streamlining the information flow compared to sequential approaches.
 * **SAM 2 Perceptual Loss**: Integrated a new perceptual loss function based on the SAM 2 feature space, supplementing the standard MSE diffusion loss to improve semantic consistency in the super-resolved output.
 * **Memory Optimization**: The architecture is optimized for consumer-grade hardware (e.g., NVIDIA RTX 4090), significantly reducing VRAM usage without compromising performance.
@@ -74,11 +75,13 @@ python test.py --config configs/test_default.yaml \
 
 SAM 2.1 weights are downloaded from the Hugging Face Hub (`facebook/sam2.1-hiera-large`) on first use.
 
+`segment_routing` must match the training config. `sam_refresh_timesteps` (default `[750, 500, 250]`) sets when the SAM 2 conditions are recomputed on the predicted clean image; each refresh decodes the current estimate and runs SAM 2 once, and `--sam_refresh_timesteps` with no value disables it.
+
 ## 🌈 Train 
 #### Step 1: Prepare training data
 Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR was trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled + the first 5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset). Put the sampled LSDIR images and the FFHQ images into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
 
-The whole pipeline (degraded pairs, RAM tags, DAPE embeddings, SAM 2 embeddings and mask logits) can be run with:
+The whole pipeline (degraded pairs, RAM tags, DAPE embeddings, SAM 2 embeddings and mask logits of the LR and GT images) can be run with:
 
 ```bash
 ./scripts/prepare_data.sh preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
@@ -91,7 +94,10 @@ python data_tools/make_paired_data.py --gt_path preset/datasets/train_datasets/L
 python data_tools/make_tags.py --root_path preset/datasets/train_datasets/LSDIR
 python data_tools/make_dape_embeds.py --image_dir preset/datasets/train_datasets/LSDIR/sr_bicubic --embed_dir preset/datasets/train_datasets/LSDIR/dape_embeds --ram_ft_path preset/models/DAPE.pth
 python data_tools/sam_processing.py --image_dir preset/datasets/train_datasets/LSDIR/sr_bicubic --embed_dir preset/datasets/train_datasets/LSDIR/sam_embeds --logit_dir preset/datasets/train_datasets/LSDIR/seg_embeds
+python data_tools/sam_processing.py --image_dir preset/datasets/train_datasets/LSDIR/gt --embed_dir preset/datasets/train_datasets/LSDIR/sam_embeds_gt --logit_dir preset/datasets/train_datasets/LSDIR/seg_embeds_gt
 ```
+
+The last step (SAM 2 on the GT images) is only needed by `clean_sam_prob > 0`; skip it in `prepare_data.sh` with `WITH_GT_SAM=false`.
 
 - `--gt_path` the path of gt images. If you have multi gt dirs, you can set it as `PATH1 PATH2 PATH3 ...`
 - `--save_dir` the path of paired images 
@@ -117,6 +123,8 @@ your_training_datasets/
         └── 0000001.pt  # SAM 2 image embeddings, (1, 256, 64, 64)
     └── seg_embeds
         └── 0000001.pt  # SAM 2 mask decoder logits, (N, 1, 256, 256)
+    └── sam_embeds_gt   # (optional, for clean_sam_prob) as sam_embeds, on the GT image
+    └── seg_embeds_gt   # (optional, for clean_sam_prob) as seg_embeds, on the GT image
 ```
 
 
@@ -127,6 +135,19 @@ your_training_datasets/
 ```
 
 Every key of the YAML config is a `train.py` argument, and flags passed on the command line override the config (e.g. `./scripts/run_train.sh configs/train_default.yaml --max_train_steps=1000`). `configs/train_sam_ablation.yaml` trains the same model without the SAM 2 perceptual loss.
+
+## 🖥️ SLURM cluster
+
+`cluster/` contains SLURM jobs that run everything inside the `pytorch/pytorch:2.6.0-cuda12.6-cudnn9-devel` Singularity container, with a virtual environment in `~/venvs/segesr` (`requirements-cluster.txt`). Submit them from the repository root; logs go to `slurm_logs/`.
+
+```bash
+sbatch cluster/setup_env.sbatch                                   # once: container, packages, SAM 2.1 weights, tests
+sbatch cluster/prepare_data.sbatch preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
+sbatch cluster/train.sbatch configs/train_default.yaml --output_dir=preset/train_output/segesr_v2
+sbatch cluster/test.sbatch preset/train_output/segesr_v2
+```
+
+Edit the `#SBATCH` lines (partition, QOS, memory) for another cluster.
 
 ## 📜 Credits & Acknowledgments
 This project is built upon the excellent research of **SeeSR** and **SAM 2**.

@@ -24,7 +24,7 @@ learning_rate: 2.0e-7          # pre-existing SeeSR modules
 finetune_lr: 5.0e-7            # new modules (fusion convs + SAM 2 attentions)
 lr_scheduler: constant_with_warmup
 lr_warmup_steps: 500
-train_batch_size: 1            # SAM 2 segmentation embeddings have a variable number of masks
+train_batch_size: 1            # >1 works (masks are padded per batch) if the GPU memory allows it
 gradient_accumulation_steps: 4
 max_train_steps: 30000
 checkpointing_steps: 3500
@@ -56,6 +56,12 @@ init_sam_from_dape: true
 # ---------------------------------------------------------------- SAM 2 conditioning & losses
 use_sam: true
 sam_model_size: large
+# Each latent pixel attends only to the SAM 2 segments covering it (set the same value in the test config).
+segment_routing: true
+# Up to 50% of the low-noise samples are conditioned on the SAM 2 outputs of the GT image, to match the
+# SAM 2 refresh on the predicted clean image at inference. Needs 'sam_embeds_gt/' + 'seg_embeds_gt/'
+# (scripts/prepare_data.sh); set it to 0 to train with the LR conditions only.
+clean_sam_prob: 0.5
 use_sam_loss: true
 sam_loss_weight: 0.1
 use_lpips_loss: false

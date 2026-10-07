@@ -729,6 +729,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         image_encoder_hidden_states: torch.Tensor = None,
         sam2_encoder_hidden_states: torch.Tensor = None,
         sam2_segmentation_encoder_hidden_states: torch.Tensor = None,
+        sam2_segmentation_masks: torch.Tensor = None,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         The [`UNet2DConditionModel`] forward method.
@@ -946,6 +947,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     image_encoder_hidden_states=image_encoder_hidden_states,
                     sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                     sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
+                    sam2_segmentation_masks=sam2_segmentation_masks,
                     **additional_residuals,
                 )
             else:
@@ -979,6 +981,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 image_encoder_hidden_states=image_encoder_hidden_states,
                 sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                 sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
+                sam2_segmentation_masks=sam2_segmentation_masks,
             )
             # To support T2I-Adapter-XL
             if (
@@ -1016,6 +1019,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     image_encoder_hidden_states=image_encoder_hidden_states,
                     sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                     sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
+                    sam2_segmentation_masks=sam2_segmentation_masks,
                 )
             else:
                 sample = upsample_block(

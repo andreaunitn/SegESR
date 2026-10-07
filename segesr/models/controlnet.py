@@ -644,6 +644,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
         image_encoder_hidden_states: torch.Tensor = None,
         sam2_encoder_hidden_states: torch.Tensor = None,
         sam2_segmentation_encoder_hidden_states: torch.Tensor = None,
+        sam2_segmentation_masks: torch.Tensor = None,
         vae_encode_condition_hidden_states: torch.Tensor = None, 
     ) -> Union[ControlNetOutput, Tuple]:
         """
@@ -774,6 +775,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                     image_encoder_hidden_states=image_encoder_hidden_states,
                     sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                     sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
+                    sam2_segmentation_masks=sam2_segmentation_masks,
                 )
 
             else:
@@ -792,6 +794,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                 image_encoder_hidden_states=image_encoder_hidden_states,
                 sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                 sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
+                sam2_segmentation_masks=sam2_segmentation_masks,
             )
 
         # 5. Control net blocks

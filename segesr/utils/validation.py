@@ -8,9 +8,8 @@ from torchvision import transforms
 from accelerate.logging import get_logger
 
 from ram import inference_ram as inference
-from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
 from segesr.utils.diffusion_utils import decode_latents_to_rgb, get_diffusion_target, predict_original_latents
-from segesr.utils.sam_utils import compute_sam2_conditions, seg_logits_to_hidden_states
+from segesr.utils.sam_utils import MAX_MASKS, build_segment_conditions, compute_sam2_conditions, seg_logits_to_hidden_states
 
 logger = get_logger(__name__)
 
@@ -26,15 +25,42 @@ def image_grid(imgs, rows, cols):
 
     return grid
 
-def get_sam_kwargs(batch, device, dtype, use_sam):
-    """Builds the SAM 2 conditioning kwargs expected by the SegESR UNet/ControlNet."""
+def get_sam_kwargs(batch, device, dtype, use_sam, mask_size, segment_routing=True, use_clean=None):
+    """
+    Builds the SAM 2 conditioning kwargs expected by the SegESR UNet/ControlNet.
+
+    Args:
+        mask_size (tuple): (h, w) latent resolution of the segment masks.
+        segment_routing (bool): restrict the segmentation attention of each pixel to its segments.
+        use_clean (torch.BoolTensor, optional): (B,) samples that use the SAM 2 conditions of the GT
+            image ('sam_img_embeds_gt' / 'sam_seg_embeds_gt') instead of the ones of the LR image.
+    """
 
     if not use_sam:
         return {}
 
+    img_embeds = batch["sam_img_embeds"].to(device)
+    seg_logits = batch["sam_seg_embeds"].to(device)
+
+    if use_clean is not None and use_clean.any():
+        clean_img_embeds = batch["sam_img_embeds_gt"].to(device)
+        clean_seg_logits = batch["sam_seg_embeds_gt"].to(device)
+
+        # Pad both mask sets to the same number of (all-zero, i.e. empty) masks before selecting
+        num_masks = max(seg_logits.shape[1], clean_seg_logits.shape[1])
+        seg_logits = F.pad(seg_logits, (0, 0, 0, 0, 0, num_masks - seg_logits.shape[1]))
+        clean_seg_logits = F.pad(clean_seg_logits, (0, 0, 0, 0, 0, num_masks - clean_seg_logits.shape[1]))
+
+        select = use_clean.to(device)[:, None, None, None]
+        img_embeds = torch.where(select, clean_img_embeds, img_embeds)
+        seg_logits = torch.where(select, clean_seg_logits, seg_logits)
+
+    segment_tokens, segment_masks = build_segment_conditions(img_embeds, seg_logits, mask_size)
+
     return {
-        "sam2_encoder_hidden_states": batch["sam_img_embeds"].to(device, dtype=dtype),
-        "sam2_segmentation_encoder_hidden_states": batch["sam_seg_embeds"].to(device, dtype=dtype),
+        "sam2_encoder_hidden_states": img_embeds.to(dtype),
+        "sam2_segmentation_encoder_hidden_states": segment_tokens.to(dtype),
+        "sam2_segmentation_masks": segment_masks.to(dtype) if segment_routing else None,
     }
 
 def validation(
@@ -69,6 +95,9 @@ def validation(
     # 1. Visual Image Generation (Qualitative Check)
     # -------------------------------------------------------------------------
     if args.generate_validation_image and accelerator.is_main_process and args.validation_image:
+        # Imported here: the pipeline itself imports `segesr.utils`
+        from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
+
         pipeline = StableDiffusionControlNetPipeline(
             vae=accelerator.unwrap_model(vae),
             text_encoder=accelerator.unwrap_model(text_encoder),
@@ -100,10 +129,11 @@ def validation(
 
         sam_kwargs = {}
         if args.use_sam:
-            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(val_image, sam_generator)
+            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(val_image, sam_generator, max_masks=MAX_MASKS)
             sam_kwargs = {
                 "sam2_encoder_hidden_states": sam_img_embeds.to(accelerator.device),
                 "sam2_segmentation_encoder_hidden_states": seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device),
+                "segment_routing": args.segment_routing,
             }
 
         user_prompt = args.validation_prompt[0] if args.validation_prompt else ""
@@ -176,7 +206,8 @@ def validation(
                     encoder_hidden_states = text_encoder(val_batch["input_ids"].to(accelerator.device))[0]
                     ram_hidden = val_batch["ram_values"].to(accelerator.device, dtype=weight_dtype)
                     controlnet_cond = val_batch["conditioning_pixel_values"].to(accelerator.device, dtype=weight_dtype)
-                    sam_kwargs = get_sam_kwargs(val_batch, accelerator.device, weight_dtype, args.use_sam)
+                    sam_kwargs = get_sam_kwargs(val_batch, accelerator.device, weight_dtype, args.use_sam,
+                                                mask_size=latents.shape[-2:], segment_routing=args.segment_routing)
 
                     down_block_res_samples, mid_block_res_sample = controlnet(
                         noisy_latents,

@@ -15,7 +15,7 @@ for _path in (PROJECT_ROOT, PROJECT_ROOT / "third_party"):
     if str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from segesr.utils.sam_utils import compute_sam2_conditions, load_sam2, sam2_autocast
+from segesr.utils.sam_utils import MAX_MASKS, compute_sam2_conditions, load_sam2, sam2_autocast
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg")
 
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     parser.add_argument("--logit_dir", type=str, default=None, help="Output directory of the mask decoder logits ('seg_embeds').")
     parser.add_argument("--mask_dir", type=str, default=None, help="Output directory of the binary masks ('gt_seg').")
     parser.add_argument("--model_size", type=str, default="large", choices=["tiny", "small", "base_plus", "large"])
-    parser.add_argument("--max_seg", type=int, default=150, help="Maximum number of masks kept per image, sorted by area.")
+    parser.add_argument("--max_seg", type=int, default=MAX_MASKS, help="Maximum number of masks kept per image, sorted by area.")
     parser.add_argument("--points_per_side", type=int, default=16, help="Points per side for mask generation grid.")
     parser.add_argument("--points_per_batch", type=int, default=128, help="Points processed in a batch for mask generation.")
     parser.add_argument("--stability_score_thresh", type=float, default=0.9, help="Stability score threshold for filtering masks.")

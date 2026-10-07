@@ -2,6 +2,7 @@ import contextlib
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 SAM2_MODELS = {
     "tiny": "facebook/sam2.1-hiera-tiny",
@@ -12,6 +13,12 @@ SAM2_MODELS = {
 
 # Shape of the mask decoder low-res logits SegESR uses as segmentation embeddings.
 SEG_LOGITS_SIZE = 256
+
+# Maximum number of masks kept per image, sorted by area (as `data_tools/sam_processing.py --max_seg`).
+MAX_MASKS = 150
+
+# The segment token axis is padded to a multiple of this (xformers attention bias alignment).
+SEGMENT_TOKENS_MULTIPLE = 8
 
 def load_sam2(model_size="large", device=None, **kwargs):
     """
@@ -108,6 +115,63 @@ def compute_sam2_conditions(image, sam_generator, max_masks=None):
     return img_embeds, seg_logits
 
 def seg_logits_to_hidden_states(seg_logits):
-    """(N, 1, 256, 256) per-mask logits -> (1, N, 256, 256) batch expected by the models."""
+    """(N, 1, 256, 256) per-mask logits -> (1, N, 256, 256) batch expected by `build_segment_conditions`."""
 
     return seg_logits.squeeze(1).unsqueeze(0)
+
+def pad_seg_logits(seg_logits_list):
+    """
+    Stacks per-image (N_i, 256, 256) mask logits into a (B, max N_i, 256, 256) batch.
+    Padding maps are all-zero, which `build_segment_conditions` treats as "no mask".
+    """
+
+    max_masks = max(logits.shape[0] for logits in seg_logits_list)
+    batch = seg_logits_list[0].new_zeros(len(seg_logits_list), max_masks, *seg_logits_list[0].shape[1:])
+    for i, logits in enumerate(seg_logits_list):
+        batch[i, :logits.shape[0]] = logits
+    return batch
+
+def build_segment_conditions(img_embeds, seg_logits, mask_size, pad_to=SEGMENT_TOKENS_MULTIPLE):
+    """
+    Turns the SAM 2 outputs into the inputs of the segmentation attention (SMCA): one token per
+    segment plus its binary mask, so that each latent pixel attends only to the segments covering it
+    (see `segment_routed_attention` in the UNet blocks).
+
+    Each segment token is the Hiera embedding averaged inside the mask (weighted by the mask
+    probabilities); the masks are the mask logits > 0, as in SAM 2. Token 0 is an all-zero
+    "null" token that covers the whole image: pixels outside every mask attend to it, which
+    gives a zero update. All-zero logit maps (empty images, batch padding) are treated as no mask.
+    The token axis is zero-padded to a multiple of `pad_to`, as xformers requires for attention biases.
+
+    Args:
+        img_embeds (torch.Tensor): (B, C, 64, 64) Hiera image embeddings.
+        seg_logits (torch.Tensor): (B, N, 256, 256) mask decoder logits.
+        mask_size (tuple): (h, w) resolution of the returned masks, i.e. of the latents.
+
+    Returns:
+        tokens (torch.Tensor): (B, K, C) segment tokens, K = 1 + N padded to a multiple of `pad_to`.
+        masks (torch.Tensor): (B, K, h, w) binary segment masks.
+    """
+
+    embeds = img_embeds.float()
+    seg_logits = seg_logits.float()
+    batch_size, channels = embeds.shape[:2]
+
+    valid = (seg_logits.flatten(2).abs().amax(dim=-1) > 0).float()[..., None, None]
+
+    # SAM 2 resizes the input to a square, so its embeddings and logits share the image extent
+    pool_masks = torch.sigmoid(F.interpolate(seg_logits, size=embeds.shape[-2:], mode="bilinear", align_corners=False)) * valid
+    areas = pool_masks.flatten(2).sum(dim=-1, keepdim=True)
+    tokens = torch.einsum("bnhw,bchw->bnc", pool_masks, embeds) / areas.clamp_min(1e-6)
+
+    masks = (F.interpolate(seg_logits, size=tuple(mask_size), mode="bilinear", align_corners=False) > 0).float() * valid
+
+    tokens = torch.cat([tokens.new_zeros(batch_size, 1, channels), tokens], dim=1)
+    masks = torch.cat([masks.new_ones(batch_size, 1, *masks.shape[-2:]), masks], dim=1)
+
+    num_padding = -tokens.shape[1] % pad_to
+    if num_padding:
+        tokens = F.pad(tokens, (0, 0, 0, num_padding))
+        masks = F.pad(masks, (0, 0, 0, 0, 0, num_padding))
+
+    return tokens, masks

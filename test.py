@@ -28,6 +28,7 @@ from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
 from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
 from segesr.utils import compute_sam2_conditions, load_sam2, parse_args_with_config, seg_logits_to_hidden_states
+from segesr.utils.sam_utils import MAX_MASKS
 from segesr.utils.color_fix import adain_color_fix, wavelet_color_fix
 
 tensor_transforms = transforms.Compose([
@@ -104,7 +105,7 @@ def get_validation_prompt(args, image, model, device="cuda"):
 
     return validation_prompt, ram_encoder_hidden_states
 
-def main(args, enable_xformers_memory_efficient_attention=True):
+def main(args):
     txt_path = os.path.join(args.output_dir, "txt")
     os.makedirs(txt_path, exist_ok=True)
 
@@ -113,7 +114,7 @@ def main(args, enable_xformers_memory_efficient_attention=True):
     if args.seed is not None:
         set_seed(args.seed)
 
-    pipeline = load_segesr_pipeline(args, accelerator, enable_xformers_memory_efficient_attention)
+    pipeline = load_segesr_pipeline(args, accelerator, args.enable_xformers_memory_efficient_attention)
     model = load_tag_model(args, accelerator.device)
     sam_generator = load_sam2(
         model_size=args.sam_model_size,
@@ -142,7 +143,7 @@ def main(args, enable_xformers_memory_efficient_attention=True):
             negative_prompt = args.negative_prompt # dirty, messy, low quality, frames, deformed,
 
             # SAM 2 conditions are computed on the original LR image, as for the training data
-            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(validation_image, sam_generator)
+            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(validation_image, sam_generator, max_masks=MAX_MASKS)
             sam2_encoder_hidden_states = sam_img_embeds.to(accelerator.device)
             sam2_segmentation_encoder_hidden_states = seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device)
 
@@ -176,6 +177,8 @@ def main(args, enable_xformers_memory_efficient_attention=True):
                             start_steps=args.start_steps, start_point=args.start_point, ram_encoder_hidden_states=ram_encoder_hidden_states,
                             sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
                             sam2_encoder_hidden_states=sam2_encoder_hidden_states,
+                            segment_routing=args.segment_routing,
+                            sam_generator=sam_generator, sam_refresh_timesteps=args.sam_refresh_timesteps,
                             latent_tiled_size=args.latent_tiled_size, latent_tiled_overlap=args.latent_tiled_overlap,
                             args=args,
                         ).images[0]
@@ -197,12 +200,17 @@ def parse_args(input_args=None):
     parser.add_argument("--ram_path", type=str, default="preset/models/ram_swin_large_14m.pth")
     parser.add_argument("--ram_ft_path", type=str, default=None, help="Path to the DAPE weights.")
     parser.add_argument("--sam_model_size", type=str, default="large", choices=["tiny", "small", "base_plus", "large"])
+    parser.add_argument("--segment_routing", action="store_true",
+                        help="Restrict the segmentation attention of each pixel to its segments. Use the same setting as in training.")
+    parser.add_argument("--sam_refresh_timesteps", type=int, nargs="*", default=None,
+                        help="Diffusion timesteps (e.g. 750 500 250) at which the SAM 2 conditions are recomputed on the predicted clean image.")
     parser.add_argument("--prompt", type=str, default="") # user can add self-prompt to improve the results
     parser.add_argument("--added_prompt", type=str, default="clean, high-resolution, 8k")
     parser.add_argument("--negative_prompt", type=str, default="dotted, noise, blur, lowres, smooth")
     parser.add_argument("--image_path", type=str, default=None, help="LR image or folder of LR images.")
     parser.add_argument("--output_dir", type=str, default=None)
     parser.add_argument("--mixed_precision", type=str, default="fp16", choices=["no", "fp16", "bf16"])
+    parser.add_argument("--enable_xformers_memory_efficient_attention", action="store_true")
     parser.add_argument("--guidance_scale", type=float, default=5.5)
     parser.add_argument("--conditioning_scale", type=float, default=1.0)
     parser.add_argument("--num_inference_steps", type=int, default=50)

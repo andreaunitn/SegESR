@@ -1,0 +1,27 @@
+# Packages installed by cluster/setup_env.sbatch on top of the cluster container
+# (pytorch/pytorch:2.6.0-cuda12.6-cudnn9-devel), which already provides torch and torchvision.
+# Versions follow requirements.txt. SAM 2 and xformers are installed separately by the setup job.
+accelerate==1.7.0
+bitsandbytes==0.45.5
+diffusers==0.21.0
+einops==0.8.1
+fairscale==0.4.13
+huggingface-hub==0.25.2
+lmdb==1.6.2
+loralib==0.1.2
+numpy==1.26.0
+openai-clip==1.0.1
+opencv-python-headless==4.10.0.84
+packaging
+pyiqa==0.1.13
+pytest==8.3.5
+pytorch-lightning==2.3.3
+PyYAML==6.0.2
+requests
+safetensors==0.5.3
+scipy==1.15.3
+tensorboard==2.14.0
+timm==1.0.15
+tqdm==4.67.1
+transformers==4.37.2
+wandb==0.19.11

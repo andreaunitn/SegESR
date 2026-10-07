@@ -9,6 +9,10 @@ ram_path: preset/models/ram_swin_large_14m.pth
 ram_ft_path: preset/models/DAPE.pth
 sam_model_size: large
 
+# ---------------------------------------------------------------- SAM 2 conditioning
+segment_routing: true                  # must match the training config
+sam_refresh_timesteps: [750, 500, 250] # recompute the SAM 2 conditions on the predicted clean image; [] to disable
+
 # ---------------------------------------------------------------- Prompts
 prompt: ""
 added_prompt: "clean, high-resolution, 8k"
@@ -25,6 +29,7 @@ upscale: 4
 sample_times: 1
 align_method: adain
 mixed_precision: bf16
+enable_xformers_memory_efficient_attention: true
 
 # ---------------------------------------------------------------- Tiling (24 GB GPU)
 vae_encoder_tiled_size: 1024
