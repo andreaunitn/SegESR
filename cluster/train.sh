@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=segesr_train
-#SBATCH --partition=students
-#SBATCH --qos=students_limit
+#SBATCH --partition=department_only
 #SBATCH --gpus=1
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=32G

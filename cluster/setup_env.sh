@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=segesr_setup
-#SBATCH --partition=students
-#SBATCH --qos=students_limit
+#SBATCH --partition=department_only
 #SBATCH --gpus=1
 #SBATCH --mem=16G
 #SBATCH --output=slurm_logs/%x_%j.log

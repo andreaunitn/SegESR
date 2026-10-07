@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=segesr_download
-#SBATCH --partition=students
-#SBATCH --qos=students_limit
+#SBATCH --partition=department_only
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=8G
 #SBATCH --output=slurm_logs/%x_%j.log
