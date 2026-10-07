@@ -39,8 +39,9 @@ in_container bash -c '
 
     pip install -r requirements-cluster.txt -c "$VIRTUAL_ENV/constraints.txt"
 
-    # Without build isolation, the SAM 2 extension is compiled against the container torch
-    pip install --no-build-isolation "git+https://github.com/facebookresearch/sam2.git"
+    # Without build isolation, the SAM 2 extension is compiled against the container torch.
+    # Installed from the GitHub archive: the container has no git.
+    pip install --no-build-isolation "https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip"
 
     pip install xformers==0.0.29.post3 -c "$VIRTUAL_ENV/constraints.txt" \
         || echo "WARNING: xformers could not be installed (see the check below)."
