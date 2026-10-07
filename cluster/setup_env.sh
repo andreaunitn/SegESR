@@ -39,6 +39,11 @@ in_container bash -c '
 
     pip install -r requirements-cluster.txt -c "$VIRTUAL_ENV/constraints.txt"
 
+    # facexlib (a pyiqa dependency) pulls the GUI build of OpenCV, which needs system libraries missing in
+    # the container (libgthread, libGL). Both builds share the cv2 folder, so the headless one is reinstalled.
+    pip uninstall -y opencv-python
+    pip install --force-reinstall --no-deps "$(grep -E "^opencv-python-headless" requirements-cluster.txt)"
+
     # Without build isolation, the SAM 2 extension is compiled against the container torch.
     # Installed from the GitHub archive: the container has no git.
     pip install --no-build-isolation "https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip"
