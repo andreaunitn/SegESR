@@ -38,11 +38,11 @@ gradient_accumulation_steps: 4
 max_train_steps: 30000
 checkpointing_steps: 5000      # divides max_train_steps, so the last step is saved as a checkpoint too
 resume_from_checkpoint: latest
-mixed_precision: bf16
+mixed_precision: fp16          # the cluster GPUs (Turing) have no native bf16; bf16 is fine on Ampere or newer
 gradient_checkpointing: true
 use_8bit_adam: true
 allow_tf32: true
-enable_xformers_memory_efficient_attention: true
+enable_xformers_memory_efficient_attention: false   # PyTorch's attention is used instead (xformers gains nothing on Turing)
 
 # ---------------------------------------------------------------- Validation
 validation_steps: 1000

@@ -42,10 +42,13 @@ def load_sam2(model_size="large", device=None, **kwargs):
     return SAM2AutomaticMaskGenerator.from_pretrained(SAM2_MODELS[model_size], device=str(device), **kwargs)
 
 def sam2_autocast(sam_generator):
-    """bf16 autocast context for SAM 2 inference (no-op on CPU)."""
+    """
+    bf16 autocast context for SAM 2 inference on GPUs with native bf16 (Ampere or newer).
+    Older GPUs (e.g. Turing) and the CPU run SAM 2 in float32.
+    """
 
-    device = sam_generator.predictor.device
-    if torch.device(device).type == "cuda":
+    device = torch.device(sam_generator.predictor.device)
+    if device.type == "cuda" and torch.cuda.get_device_capability(device)[0] >= 8:
         return torch.autocast(device_type="cuda", dtype=torch.bfloat16)
     return contextlib.nullcontext()
 

@@ -29,9 +29,9 @@ process_size: 512
 upscale: 4
 sample_times: 1
 align_method: adain
-mixed_precision: bf16
+mixed_precision: fp16          # the cluster GPUs (Turing) have no native bf16; bf16 is fine on Ampere or newer
 seed: 42
-enable_xformers_memory_efficient_attention: true
+enable_xformers_memory_efficient_attention: false   # PyTorch's attention is used instead (xformers gains nothing on Turing)
 
 # ---------------------------------------------------------------- Tiling (24 GB GPU)
 vae_encoder_tiled_size: 1024

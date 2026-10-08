@@ -48,8 +48,8 @@ in_container bash -c '
     # Installed from the GitHub archive: the container has no git.
     pip install --no-build-isolation "https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip"
 
-    pip install xformers==0.0.29.post3 -c "$VIRTUAL_ENV/constraints.txt" \
-        || echo "WARNING: xformers could not be installed (see the check below)."
+    # xformers is not used: its wheels do not match the container CUDA, and the PyTorch attention is used instead
+    pip uninstall -y xformers
 '
 
 echo "--- 4/5: Check"
@@ -59,11 +59,10 @@ import torch, diffusers, transformers, accelerate, sam2, pyiqa
 print(f"torch {torch.__version__} | diffusers {diffusers.__version__} | transformers {transformers.__version__} | accelerate {accelerate.__version__}")
 print(f"CUDA available: {torch.cuda.is_available()}" + (f" ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else ""))
 
-try:
-    import xformers.ops
-    print(f"xformers {xformers.__version__}")
-except ImportError:
-    print("xformers NOT available: set `enable_xformers_memory_efficient_attention: false` in the train and test configs.")
+if torch.cuda.is_available():
+    major, minor = torch.cuda.get_device_capability(0)
+    print(f"GPU compute capability {major}.{minor}: " + ("bf16 supported" if major >= 8 else "use mixed_precision fp16"))
+    print(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 2**30:.1f} GB")
 EOF
 
 echo "--- 5/5: SAM 2.1 weights and tests"
