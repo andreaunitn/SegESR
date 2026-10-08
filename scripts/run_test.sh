@@ -2,12 +2,17 @@
 # Run SegESR inference + metrics on every checkpoint of a training run and every test dataset.
 #
 # Usage: ./scripts/run_test.sh [CHECKPOINT_BASE_DIR] [CONFIG]
-#   CHECKPOINT_BASE_DIR  folder containing 'checkpoint-*' subfolders (default: preset/train_output/segesr)
+#   CHECKPOINT_BASE_DIR  folder containing 'checkpoint-*' subfolders (default: preset/train_output/segesr),
+#                        or a single model folder with 'unet/' and 'controlnet/' (e.g. preset/models/seesr)
 #   CONFIG               test config (default: configs/test_default.yaml)
 #
 # Environment variables:
 #   DATASETS          space-separated dataset names (default: "DIV2K DRealSR RealLR200 RealSR")
 #   SKIP_GENERATION   "true" to only (re)compute metrics on existing outputs (default: false)
+#   TEST_ARGS         extra test.py flags, e.g. "--sam_refresh_timesteps" to disable the SAM 2 refresh (default: none)
+#   TAG               suffix of the output / metric names, to keep test variants apart, e.g. "norefresh" (default: none)
+#
+# Images already generated are skipped, so re-running the same command resumes an interrupted run.
 #   CUDA_VISIBLE_DEVICES  GPU to use (default: 0)
 
 set -u
@@ -18,6 +23,8 @@ CHECKPOINT_BASE_DIR="${1:-preset/train_output/segesr}"
 CONFIG="${2:-configs/test_default.yaml}"
 read -r -a datasets <<< "${DATASETS:-DIV2K DRealSR RealLR200 RealSR}"
 SKIP_GENERATION="${SKIP_GENERATION:-false}"
+read -r -a test_args <<< "${TEST_ARGS:-}"
+TAG="${TAG:-}"
 
 BASE_TEST_DATA_DIR="preset/datasets/test_datasets"
 BASE_OUTPUT_DIR="preset/datasets/output"
@@ -29,16 +36,26 @@ if [ ! -f "$CONFIG" ]; then
     exit 1
 fi
 
-mapfile -t checkpoints < <(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" | sort -V)
+if [ -d "$CHECKPOINT_BASE_DIR/unet" ] && [ -d "$CHECKPOINT_BASE_DIR/controlnet" ]; then
+    checkpoints=("$CHECKPOINT_BASE_DIR")   # a single model, e.g. the original SeeSR
+else
+    mapfile -t checkpoints < <(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" | sort -V)
+fi
 if [ ${#checkpoints[@]} -eq 0 ]; then
-    echo "ERROR: no 'checkpoint-*' folder found in '$CHECKPOINT_BASE_DIR'."
+    echo "ERROR: no 'checkpoint-*' folder (or 'unet/' + 'controlnet/') found in '$CHECKPOINT_BASE_DIR'."
     exit 1
 fi
 
 mkdir -p "$BASE_OUTPUT_DIR"
 
 for checkpoint_path in "${checkpoints[@]}"; do
-    MODEL_NAME=$(basename "$checkpoint_path")
+    # Outputs and metrics are named <run>_<checkpoint> (or <model> for a single model), so runs never overwrite each other
+    if [ "$checkpoint_path" = "$CHECKPOINT_BASE_DIR" ]; then
+        MODEL_NAME=$(basename "$checkpoint_path")
+    else
+        MODEL_NAME="$(basename "$CHECKPOINT_BASE_DIR")_$(basename "$checkpoint_path")"
+    fi
+    MODEL_NAME="${MODEL_NAME}${TAG:+_$TAG}"
 
     echo "======================================================================"
     echo "## PROCESSING CHECKPOINT: $MODEL_NAME"
@@ -67,7 +84,9 @@ for checkpoint_path in "${checkpoints[@]}"; do
                 --config "$CONFIG" \
                 --finetuned_model_path "$checkpoint_path" \
                 --image_path "$LR_IMAGE_PATH" \
-                --output_dir "$SR_OUTPUT_PATH"; then
+                --output_dir "$SR_OUTPUT_PATH" \
+                --skip_existing \
+                ${test_args[@]+"${test_args[@]}"}; then
                 echo "ERROR: generation failed for ${dataset_name}. Skipping metrics."
                 continue
             fi

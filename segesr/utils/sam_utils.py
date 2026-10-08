@@ -175,3 +175,30 @@ def build_segment_conditions(img_embeds, seg_logits, mask_size, pad_to=SEGMENT_T
         masks = F.pad(masks, (0, 0, 0, 0, 0, num_padding))
 
     return tokens, masks
+
+def model_uses_sam2(config):
+    """Whether a SegESR UNet/ControlNet with this config is conditioned on SAM 2."""
+
+    return config.use_sam2_image_attention or config.use_sam2_segmentation_attention
+
+def sam2_model_kwargs(config, img_embeds, seg_logits, mask_size, dtype):
+    """
+    Builds the SAM 2 inputs of a SegESR UNet/ControlNet from the SAM 2 outputs, with only the entries its
+    config uses (an empty dict for a model without SAM 2 attentions).
+
+    Args:
+        config: UNet/ControlNet config (`use_sam2_image_attention`, `use_sam2_segmentation_attention`, `segment_routing`).
+        img_embeds (torch.Tensor): (B, 256, 64, 64) Hiera image embeddings.
+        seg_logits (torch.Tensor): (B, N, 256, 256) mask decoder logits.
+        mask_size (tuple): (h, w) latent resolution of the segment masks.
+    """
+
+    kwargs = {}
+    if config.use_sam2_image_attention:
+        kwargs["sam2_encoder_hidden_states"] = img_embeds.to(dtype)
+    if config.use_sam2_segmentation_attention:
+        segment_tokens, segment_masks = build_segment_conditions(img_embeds, seg_logits, mask_size)
+        kwargs["sam2_segmentation_encoder_hidden_states"] = segment_tokens.to(dtype)
+        if config.segment_routing:
+            kwargs["sam2_segmentation_masks"] = segment_masks.to(dtype)
+    return kwargs

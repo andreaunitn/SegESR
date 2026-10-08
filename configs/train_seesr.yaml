@@ -1,33 +1,42 @@
-# SegESR training configuration.
-# Usage: accelerate launch train.py --config configs/train_default.yaml [--any_flag value ...]
-# Keys are train.py argument names; flags given on the command line override this file.
+# SeeSR baseline training configuration: SeeSR fine-tuned with the same data, steps and settings as SegESR,
+# without any SegESR component. It holds every shared setting; configs/train_segesr.yaml builds on it.
+#
+# Usage: accelerate launch train.py --config configs/train_seesr.yaml [--any_flag value ...]
+# Keys are train.py argument names; flags given on the command line override this file, so the SegESR
+# components can be added one at a time on top of this baseline (see the README).
 
 # ---------------------------------------------------------------- Models
 pretrained_model_name_or_path: preset/models/stable-diffusion-2-base
 seesr_model_path: preset/models/seesr              # SeeSR checkpoint ('unet/' + 'controlnet/')
 controlnet_model_name_or_path: preset/models/seesr
-# unet_model_name_or_path: preset/train_output/segesr/checkpoint-XXXX   # to continue from a SegESR checkpoint
 tiny_vae_path: preset/models/tiny_vae
 ram_path: preset/models/ram_swin_large_14m.pth
 ram_ft_path: preset/models/DAPE.pth
 
+# ---------------------------------------------------------------- Architecture (all off = SeeSR)
+attention_fusion: sequential   # 'parallel' = PAFB
+use_sam2_image_attention: false
+use_sam2_segmentation_attention: false
+segment_routing: false
+
 # ---------------------------------------------------------------- Data & output
 root_folders: preset/datasets/train_datasets/LSDIR
 # validation_data_dir: preset/datasets/val_datasets/LSDIR
-output_dir: preset/train_output/segesr
+output_dir: preset/train_output/seesr_finetuned
 resolution: 512
 null_text_ratio: 0.5
-dataloader_num_workers: 0
+dataloader_num_workers: 4
+seed: 42
 
 # ---------------------------------------------------------------- Optimization
-learning_rate: 2.0e-7          # pre-existing SeeSR modules
-finetune_lr: 5.0e-7            # new modules (fusion convs + SAM 2 attentions)
+learning_rate: 1.0e-6          # pre-existing SeeSR modules (DAPE attentions), kept close to SeeSR
+finetune_lr: 1.0e-5            # new modules (fusion convs + SAM 2 attentions)
 lr_scheduler: constant_with_warmup
 lr_warmup_steps: 500
 train_batch_size: 1            # >1 works (masks are padded per batch) if the GPU memory allows it
 gradient_accumulation_steps: 4
 max_train_steps: 30000
-checkpointing_steps: 3500
+checkpointing_steps: 5000      # divides max_train_steps, so the last step is saved as a checkpoint too
 resume_from_checkpoint: latest
 mixed_precision: bf16
 gradient_checkpointing: true
@@ -36,11 +45,12 @@ allow_tf32: true
 enable_xformers_memory_efficient_attention: true
 
 # ---------------------------------------------------------------- Validation
-validation_steps: 100
+validation_steps: 1000
 validation_image: preset/datasets/test_datasets/RealSR/test_LR/Canon_004_LR4.png
 generate_validation_image: true
 
 # ---------------------------------------------------------------- Trainable modules
+# Modules missing from the chosen architecture are skipped.
 train_controlnet_dape_attention: true
 train_controlnet_sam_image_attention: true
 train_controlnet_sam_segmentation_attention: true
@@ -49,20 +59,13 @@ train_unet_dape_attention: true
 train_unet_sam_image_attention: true
 train_unet_sam_segmentation_attention: true
 train_unet_fusion_conv: true
-# Copy DAPE attention weights into the SAM 2 attentions. Only when starting from SeeSR:
-# set it to false when loading a checkpoint whose SAM 2 attentions are already trained.
+# Initialize the SAM 2 attentions with the DAPE attention weights (only when starting from SeeSR).
 init_sam_from_dape: true
 
-# ---------------------------------------------------------------- SAM 2 conditioning & losses
-use_sam: true
+# ---------------------------------------------------------------- SAM 2 & losses
 sam_model_size: large
-# Each latent pixel attends only to the SAM 2 segments covering it (set the same value in the test config).
-segment_routing: true
-# Up to 50% of the low-noise samples are conditioned on the SAM 2 outputs of the GT image, to match the
-# SAM 2 refresh on the predicted clean image at inference. Needs 'sam_embeds_gt/' + 'seg_embeds_gt/'
-# (scripts/prepare_data.sh); set it to 0 to train with the LR conditions only.
-clean_sam_prob: 0.5
-use_sam_loss: true
+clean_sam_prob: 0.0
+use_sam_loss: false
 sam_loss_weight: 0.1
 use_lpips_loss: false
 lpips_loss_weight: 0.1

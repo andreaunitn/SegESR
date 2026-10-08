@@ -1,0 +1,17 @@
+# Full SegESR training configuration: the SeeSR baseline (configs/train_seesr.yaml) with every SegESR component.
+# Usage: accelerate launch train.py --config configs/train_segesr.yaml [--any_flag value ...]
+base_config: train_seesr.yaml
+
+output_dir: preset/train_output/segesr
+
+# ---------------------------------------------------------------- Architecture
+attention_fusion: parallel             # PAFB
+use_sam2_image_attention: true         # SICA
+use_sam2_segmentation_attention: true  # SMCA (segment tokens)
+segment_routing: true                  # each pixel attends only to its segments
+
+# ---------------------------------------------------------------- Training
+# Up to 50% of the low-noise samples are conditioned on the SAM 2 outputs of the GT image, to match the
+# SAM 2 refresh on the predicted clean image at inference. Needs 'sam_embeds_gt/' + 'seg_embeds_gt/'.
+clean_sam_prob: 0.5
+use_sam_loss: true                     # SAM 2 perceptual loss

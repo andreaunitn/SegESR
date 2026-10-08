@@ -25,6 +25,7 @@ from diffusers.models.attention_processor import AttentionProcessor, AttnProcess
 from diffusers.models.embeddings import TextImageProjection, TextImageTimeEmbedding, TextTimeEmbedding, TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
 from .unet_2d_blocks import (
+    check_sam2_conditions,
     CrossAttnDownBlock2D,
     DownBlock2D,
     UNetMidBlock2DCrossAttn,
@@ -209,6 +210,10 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
         global_pool_conditions: bool = False,
         addition_embed_type_num_heads=64,
         use_image_cross_attention=False,
+        attention_fusion: str = "sequential",
+        use_sam2_image_attention: bool = False,
+        use_sam2_segmentation_attention: bool = False,
+        segment_routing: bool = False,
     ):
         super().__init__()
 
@@ -382,6 +387,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                 upcast_attention=upcast_attention,
                 resnet_time_scale_shift=resnet_time_scale_shift,
                 use_image_cross_attention=use_image_cross_attention,
+                attention_fusion=attention_fusion,
+                use_sam2_image_attention=use_sam2_image_attention,
+                use_sam2_segmentation_attention=use_sam2_segmentation_attention,
             )
             self.down_blocks.append(down_block)
 
@@ -416,6 +424,9 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
             use_linear_projection=use_linear_projection,
             upcast_attention=upcast_attention,
             use_image_cross_attention=use_image_cross_attention,
+            attention_fusion=attention_fusion,
+            use_sam2_image_attention=use_sam2_image_attention,
+            use_sam2_segmentation_attention=use_sam2_segmentation_attention,
         )
 
     @classmethod
@@ -475,6 +486,11 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
             controlnet_conditioning_channel_order=controlnet_conditioning_channel_order,
             conditioning_embedding_out_channels=conditioning_embedding_out_channels,
             use_image_cross_attention=use_image_cross_attention,
+            # SegESR architecture: always the same as the UNet's
+            attention_fusion=unet.config.attention_fusion,
+            use_sam2_image_attention=unet.config.use_sam2_image_attention,
+            use_sam2_segmentation_attention=unet.config.use_sam2_segmentation_attention,
+            segment_routing=unet.config.segment_routing,
         )
 
         if load_weights_from_unet:
@@ -624,7 +640,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
             fn_recursive_set_attention_slice(module, reversed_slice_size)
 
     def _set_gradient_checkpointing(self, module, value=False):
-        if isinstance(module, (CrossAttnDownBlock2D, DownBlock2D)):
+        if hasattr(module, "gradient_checkpointing"):
             module.gradient_checkpointing = value
 
     def forward(
@@ -680,6 +696,10 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                 If `return_dict` is `True`, a [`~models.controlnet.ControlNetOutput`] is returned, otherwise a tuple is
                 returned where the first element is the sample tensor.
         """
+        sam2_segmentation_masks = check_sam2_conditions(
+            self.config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, sam2_segmentation_masks
+        )
+
         # check channel order
         channel_order = self.config.controlnet_conditioning_channel_order
 

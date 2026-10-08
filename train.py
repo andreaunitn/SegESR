@@ -373,11 +373,6 @@ def parse_args(input_args=None):
         help="Make the ControlNet PAFB fusion convolutions trainable."
     )
     parser.add_argument(
-        "--train_controlnet_double_fusion_conv",
-        action="store_true",
-        help="Make the ControlNet conv->leaky_relu->conv fusion modules trainable."
-    )
-    parser.add_argument(
         "--train_unet_tag_attention",
         action="store_true",
         help="Make the UNet text (tag) attention modules trainable."
@@ -403,11 +398,6 @@ def parse_args(input_args=None):
         help="Make the UNet PAFB fusion convolutions trainable."
     )
     parser.add_argument(
-        "--train_unet_double_fusion_conv",
-        action="store_true",
-        help="Make the UNet conv->leaky_relu->conv fusion modules trainable."
-    )
-    parser.add_argument(
         "--init_sam_from_dape",
         action="store_true",
         help=(
@@ -416,23 +406,38 @@ def parse_args(input_args=None):
         ),
     )
 
-    # SAM 2
+    # SegESR architecture (saved in the UNet/ControlNet configs, so test.py rebuilds it from the checkpoint).
+    # All off = SeeSR.
     parser.add_argument(
-        "--use_sam",
-        action="store_true",
-        help="Condition the UNet/ControlNet on the SAM 2 image and segmentation embeddings."
+        "--attention_fusion",
+        type=str,
+        default="sequential",
+        choices=["sequential", "parallel"],
+        help="'sequential': text then DAPE attention (SeeSR). 'parallel': PAFB, parallel attentions fused by a conv.",
     )
+    parser.add_argument(
+        "--use_sam2_image_attention",
+        action="store_true",
+        help="Add the SAM 2 image embedding attention (SICA). Requires `--attention_fusion parallel`.",
+    )
+    parser.add_argument(
+        "--use_sam2_segmentation_attention",
+        action="store_true",
+        help="Add the SAM 2 segment-token attention (SMCA). Requires `--attention_fusion parallel`.",
+    )
+    parser.add_argument(
+        "--segment_routing",
+        action="store_true",
+        help="Restrict the SMCA of each latent pixel to the segments covering it. Requires `--use_sam2_segmentation_attention`.",
+    )
+
+    # SAM 2
     parser.add_argument(
         "--sam_model_size",
         type=str,
         default="large",
         choices=["tiny", "small", "base_plus", "large"],
         help="SAM 2.1 model used for the perceptual loss and the validation sample. Must match the one used to precompute the embeddings.",
-    )
-    parser.add_argument(
-        "--segment_routing",
-        action="store_true",
-        help="Restrict the SAM 2 segmentation attention of each latent pixel to the segments covering it.",
     )
     parser.add_argument(
         "--clean_sam_prob",
@@ -475,11 +480,13 @@ def parse_args(input_args=None):
     if args.seesr_model_path is None and args.unet_model_name_or_path is None:
         raise ValueError("Specify either `--seesr_model_path` or `--unet_model_name_or_path`.")
 
-    if not args.use_sam:
-        raise ValueError(
-            "The SegESR UNet/ControlNet blocks always run the SAM 2 attentions, so `--use_sam` is required "
-            "(and the 'sam_embeds/' and 'seg_embeds/' data folders)."
-        )
+    uses_sam2 = args.use_sam2_image_attention or args.use_sam2_segmentation_attention
+    if uses_sam2 and args.attention_fusion != "parallel":
+        raise ValueError("The SAM 2 attentions require `--attention_fusion parallel`.")
+    if args.segment_routing and not args.use_sam2_segmentation_attention:
+        raise ValueError("`--segment_routing` requires `--use_sam2_segmentation_attention`.")
+    if args.clean_sam_prob > 0 and not uses_sam2:
+        raise ValueError("`--clean_sam_prob` requires a SAM 2 attention (`--use_sam2_image_attention` or `--use_sam2_segmentation_attention`).")
 
     if not 0.0 <= args.clean_sam_prob <= 1.0:
         raise ValueError("`--clean_sam_prob` must be in [0, 1].")
@@ -585,7 +592,8 @@ def main(args):
 
     # SAM 2 is needed for the perceptual loss and to condition the validation image
     sam_generator = None
-    if args.use_sam_loss or (args.use_sam and args.generate_validation_image):
+    uses_sam2 = args.use_sam2_image_attention or args.use_sam2_segmentation_attention
+    if args.use_sam_loss or (uses_sam2 and args.generate_validation_image):
         sam_generator = load_sam2(
             model_size=args.sam_model_size,
             device=accelerator.device,
@@ -595,33 +603,26 @@ def main(args):
             stability_score_thresh=0.9,
         )
 
-    if args.unet_model_name_or_path:
-        logger.info(f"Loading UNet weights from self-trained checkpoint {args.unet_model_name_or_path}")
-        unet = UNet2DConditionModel.from_pretrained_orig(
-            args.unet_model_name_or_path,
-            subfolder="unet",
-            revision=args.revision,
-            use_image_cross_attention=True,
-        )
-    else:
-        logger.info(f"Loading UNet weights from SeeSR checkpoint {args.seesr_model_path}")
-        unet = UNet2DConditionModel.from_pretrained(
-            args.seesr_model_path,
-            subfolder="unet",
-            use_image_cross_attention=True,
-            device_map=None,
-            low_cpu_mem_usage=False,
-            revision=args.revision
-        )
+    # Modules missing from the loaded checkpoint (e.g. the SAM 2 attentions when starting from SeeSR) keep their initialization
+    architecture = dict(
+        use_image_cross_attention=True,
+        attention_fusion=args.attention_fusion,
+        use_sam2_image_attention=args.use_sam2_image_attention,
+        use_sam2_segmentation_attention=args.use_sam2_segmentation_attention,
+        segment_routing=args.segment_routing,
+    )
+    logger.info(f"SegESR architecture: {architecture}")
+
+    unet_path = args.unet_model_name_or_path or args.seesr_model_path
+    logger.info(f"Loading UNet weights from {unet_path}")
+    unet = UNet2DConditionModel.from_pretrained(
+        unet_path, subfolder="unet", device_map=None, low_cpu_mem_usage=False, revision=args.revision, **architecture
+    )
 
     if args.controlnet_model_name_or_path:
         logger.info(f"Loading ControlNet weights from {args.controlnet_model_name_or_path}")
         controlnet = ControlNetModel.from_pretrained(
-            args.controlnet_model_name_or_path,
-            subfolder="controlnet",
-            use_image_cross_attention=True,
-            device_map=None,
-            low_cpu_mem_usage=False
+            args.controlnet_model_name_or_path, subfolder="controlnet", device_map=None, low_cpu_mem_usage=False, **architecture
         )
     else:
         logger.info("Initializing ControlNet weights from the UNet")
@@ -649,35 +650,31 @@ def main(args):
         (args.train_controlnet_dape_attention, controlnet, "ControlNet", "image_attentions", ["sam2"]),
         (args.train_controlnet_sam_image_attention, controlnet, "ControlNet", SAM_IMAGE_ATTENTIONS, None),
         (args.train_controlnet_sam_segmentation_attention, controlnet, "ControlNet", SAM_SEGMENTATION_ATTENTIONS, None),
-        (args.train_controlnet_fusion_conv, controlnet, "ControlNet", "fusion_conv", ["double"]),
-        (args.train_controlnet_double_fusion_conv, controlnet, "ControlNet", "double_fusion_conv", None),
+        (args.train_controlnet_fusion_conv, controlnet, "ControlNet", "fusion_conv", None),
         (args.train_unet_tag_attention, unet, "UNet", "attentions", ["image", "sam2"]),
         (args.train_unet_dape_attention, unet, "UNet", "image_attentions", ["sam2"]),
         (args.train_unet_sam_image_attention, unet, "UNet", SAM_IMAGE_ATTENTIONS, None),
         (args.train_unet_sam_segmentation_attention, unet, "UNet", SAM_SEGMENTATION_ATTENTIONS, None),
-        (args.train_unet_fusion_conv, unet, "UNet", "fusion_conv", ["double"]),
-        (args.train_unet_double_fusion_conv, unet, "UNet", "double_fusion_conv", None),
+        (args.train_unet_fusion_conv, unet, "UNet", "fusion_conv", None),
     ]
 
+    # Modules absent from the chosen architecture (e.g. the fusion convs of SeeSR) are skipped
     for enabled, model, model_name, target_suffix, exclude_keywords in trainable_modules:
-        if enabled:
+        if enabled and any(name.endswith(target_suffix) for name, _ in model.named_modules()):
             unfreeze_params(model, model_name, target_suffix, exclude_keywords=exclude_keywords)
 
-    # SAM 2 attention modules that are being trained (in either model)
+    # SAM 2 attention modules that exist and are being trained (in either model)
     trained_sam_modules = []
-    if args.train_controlnet_sam_image_attention or args.train_unet_sam_image_attention:
+    if args.use_sam2_image_attention and (args.train_controlnet_sam_image_attention or args.train_unet_sam_image_attention):
         trained_sam_modules.append(SAM_IMAGE_ATTENTIONS)
-    if args.train_controlnet_sam_segmentation_attention or args.train_unet_sam_segmentation_attention:
+    if args.use_sam2_segmentation_attention and (args.train_controlnet_sam_segmentation_attention or args.train_unet_sam_segmentation_attention):
         trained_sam_modules.append(SAM_SEGMENTATION_ATTENTIONS)
 
-    if args.init_sam_from_dape:
-        if not trained_sam_modules:
-            logger.warning("`--init_sam_from_dape` is set but no SAM 2 attention module is trained. Skipping initialization.")
-        else:
-            for model in (controlnet, unet):
-                init_sam_weights(model, accelerator, trained_sam_modules)
-                if verify_weights(model, accelerator, trained_sam_modules) is False:
-                    raise RuntimeError(f"DAPE -> SAM 2 weight initialization failed for {model.__class__.__name__}.")
+    if args.init_sam_from_dape and trained_sam_modules:
+        for model in (controlnet, unet):
+            init_sam_weights(model, accelerator, trained_sam_modules)
+            if verify_weights(model, accelerator, trained_sam_modules) is False:
+                raise RuntimeError(f"DAPE -> SAM 2 weight initialization failed for {model.__class__.__name__}.")
     # endregion
 
     # region Optimizations
@@ -774,6 +771,7 @@ def main(args):
         root_folders=args.root_folders,
         tokenizer=tokenizer,
         null_text_ratio=args.null_text_ratio,
+        load_sam=uses_sam2,
     )
 
     if args.clean_sam_prob > 0 and not train_dataset.has_gt_sam:
@@ -795,6 +793,7 @@ def main(args):
             root_folders=args.validation_data_dir,
             tokenizer=tokenizer,
             null_text_ratio=0.0,
+            load_sam=uses_sam2,
         )
 
         validation_dataloader = torch.utils.data.DataLoader(
@@ -910,6 +909,9 @@ def main(args):
 
     run_validation = validation_dataloader is not None or args.generate_validation_image
 
+    # Architecture of the trained models: decides which SAM 2 inputs they receive
+    model_config = accelerator.unwrap_model(unet).config
+
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
             with accelerator.accumulate(controlnet, unet):
@@ -937,8 +939,8 @@ def main(args):
                     clean_prob = args.clean_sam_prob * (1.0 - timesteps.float() / noise_scheduler.config.num_train_timesteps)
                     use_clean_sam = torch.rand(bsz, device=latents.device) < clean_prob
 
-                sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, args.use_sam, mask_size=latents.shape[-2:],
-                                            segment_routing=args.segment_routing, use_clean=use_clean_sam)
+                sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, model_config, mask_size=latents.shape[-2:],
+                                            use_clean=use_clean_sam)
 
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,

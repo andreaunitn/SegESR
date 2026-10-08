@@ -5,6 +5,8 @@ segment-routed segmentation attention of the SegESR UNet blocks.
 Run with: pytest tests/test_segment_conditions.py
 """
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -16,6 +18,9 @@ from segesr.utils.validation import get_sam_kwargs
 CHANNELS = 32
 SAM_DIM = 16
 LOGIT = 20.0  # saturated mask logits, so sigmoid(logits) is ~binary
+
+# Config of a full SegESR model, as read by get_sam_kwargs
+FULL_CONFIG = SimpleNamespace(use_sam2_image_attention=True, use_sam2_segmentation_attention=True, segment_routing=True)
 
 def half_masks(size=256):
     """Two disjoint masks: left and right half of the image, as (1, 2, size, size) logits."""
@@ -37,8 +42,10 @@ def make_block():
         add_downsample=False,
         use_image_cross_attention=True,
         image_cross_attention_dim=8,
-        use_sam2=True,
-        seg_cross_attention_dim=SAM_DIM,
+        attention_fusion="parallel",
+        use_sam2_image_attention=True,
+        use_sam2_segmentation_attention=True,
+        sam2_cross_attention_dim=SAM_DIM,
     ).eval()
 
 def test_segment_tokens_are_mask_averaged_embeddings():
@@ -152,7 +159,7 @@ def test_get_sam_kwargs_selects_clean_conditions_per_sample():
         "sam_seg_embeds_gt": gt_logits,
     }
 
-    kwargs = get_sam_kwargs(batch, "cpu", torch.float32, True, mask_size=(16, 16), use_clean=torch.tensor([False, True]))
+    kwargs = get_sam_kwargs(batch, "cpu", torch.float32, FULL_CONFIG, mask_size=(16, 16), use_clean=torch.tensor([False, True]))
 
     torch.testing.assert_close(kwargs["sam2_encoder_hidden_states"][0], batch["sam_img_embeds"][0])
     torch.testing.assert_close(kwargs["sam2_encoder_hidden_states"][1], batch["sam_img_embeds_gt"][1])
@@ -162,5 +169,10 @@ def test_get_sam_kwargs_selects_clean_conditions_per_sample():
     assert masks[0, 3].max() < 1e-6        # LR sample: the 3rd mask slot is padding
     assert masks[1, 3, :8].min() > 0.99    # GT sample: 3rd mask covers the top half
 
-    unrouted = get_sam_kwargs(batch, "cpu", torch.float32, True, mask_size=(16, 16), segment_routing=False)
-    assert unrouted["sam2_segmentation_masks"] is None
+    # Only the inputs used by the model are built
+    unrouted = get_sam_kwargs(batch, "cpu", torch.float32, SimpleNamespace(**{**vars(FULL_CONFIG), "segment_routing": False}), mask_size=(16, 16))
+    assert set(unrouted) == {"sam2_encoder_hidden_states", "sam2_segmentation_encoder_hidden_states"}
+    image_only = SimpleNamespace(use_sam2_image_attention=True, use_sam2_segmentation_attention=False, segment_routing=False)
+    assert set(get_sam_kwargs(batch, "cpu", torch.float32, image_only, mask_size=(16, 16))) == {"sam2_encoder_hidden_states"}
+    baseline = SimpleNamespace(use_sam2_image_attention=False, use_sam2_segmentation_attention=False, segment_routing=False)
+    assert get_sam_kwargs(batch, "cpu", torch.float32, baseline, mask_size=(16, 16)) == {}

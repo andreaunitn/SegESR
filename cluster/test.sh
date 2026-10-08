@@ -9,8 +9,10 @@
 #
 # Usage (from the repository root):
 #   sbatch cluster/test.sh [CHECKPOINT_BASE_DIR] [CONFIG]
-#   e.g. DATASETS="RealSR DRealSR" sbatch cluster/test.sh preset/train_output/segesr_v2
-# Metrics are written to metrics/<dataset>/results_<checkpoint>.json.
+#   e.g. sbatch cluster/test.sh preset/train_output/segesr          # every checkpoint of a run
+#        sbatch cluster/test.sh preset/models/seesr                    # the original SeeSR (zero-shot baseline)
+#        DATASETS="RealSR DRealSR" sbatch cluster/test.sh preset/train_output/segesr
+# Metrics are written to metrics/<dataset>/results_<run>_<checkpoint>.json (results_<model>.json for a single model).
 
 set -euo pipefail
 

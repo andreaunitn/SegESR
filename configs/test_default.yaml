@@ -10,8 +10,9 @@ ram_ft_path: preset/models/DAPE.pth
 sam_model_size: large
 
 # ---------------------------------------------------------------- SAM 2 conditioning
-segment_routing: true                  # must match the training config
-sam_refresh_timesteps: [750, 500, 250] # recompute the SAM 2 conditions on the predicted clean image; [] to disable
+# The architecture (SICA, SMCA, segment routing...) is read from the checkpoint. The refresh only applies to
+# models with SAM 2 attentions: recompute the SAM 2 conditions on the predicted clean image; [] to disable.
+sam_refresh_timesteps: [750, 500, 250]
 
 # ---------------------------------------------------------------- Prompts
 prompt: ""
@@ -29,6 +30,7 @@ upscale: 4
 sample_times: 1
 align_method: adain
 mixed_precision: bf16
+seed: 42
 enable_xformers_memory_efficient_attention: true
 
 # ---------------------------------------------------------------- Tiling (24 GB GPU)

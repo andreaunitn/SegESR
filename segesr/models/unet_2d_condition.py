@@ -37,13 +37,12 @@ from diffusers.models.embeddings import (
 )
 from diffusers.models.modeling_utils import ModelMixin
 from .unet_2d_blocks import (
+    check_sam2_conditions,
     UNetMidBlock2DCrossAttn,
     UNetMidBlock2DSimpleCrossAttn,
     get_down_block,
     get_up_block,
 )
-
-import os, json
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -207,6 +206,10 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         cross_attention_norm: Optional[str] = None,
         addition_embed_type_num_heads=64,
         use_image_cross_attention=False,
+        attention_fusion: str = "sequential",
+        use_sam2_image_attention: bool = False,
+        use_sam2_segmentation_attention: bool = False,
+        segment_routing: bool = False,
     ):
         super().__init__()
 
@@ -457,6 +460,9 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 cross_attention_norm=cross_attention_norm,
                 attention_head_dim=attention_head_dim[i] if attention_head_dim[i] is not None else output_channel,
                 use_image_cross_attention=use_image_cross_attention,
+                attention_fusion=attention_fusion,
+                use_sam2_image_attention=use_sam2_image_attention,
+                use_sam2_segmentation_attention=use_sam2_segmentation_attention,
             )
             self.down_blocks.append(down_block)
 
@@ -478,6 +484,9 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 upcast_attention=upcast_attention,
                 attention_type=attention_type,
                 use_image_cross_attention=use_image_cross_attention,
+                attention_fusion=attention_fusion,
+                use_sam2_image_attention=use_sam2_image_attention,
+                use_sam2_segmentation_attention=use_sam2_segmentation_attention,
             )
         elif mid_block_type == "UNetMidBlock2DSimpleCrossAttn":
             self.mid_block = UNetMidBlock2DSimpleCrossAttn(
@@ -550,6 +559,9 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 cross_attention_norm=cross_attention_norm,
                 attention_head_dim=attention_head_dim[i] if attention_head_dim[i] is not None else output_channel,
                 use_image_cross_attention=use_image_cross_attention,
+                attention_fusion=attention_fusion,
+                use_sam2_image_attention=use_sam2_image_attention,
+                use_sam2_segmentation_attention=use_sam2_segmentation_attention,
             )
             self.up_blocks.append(up_block)
             prev_output_channel = output_channel
@@ -758,6 +770,10 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 If `return_dict` is True, an [`~models.unet_2d_condition.UNet2DConditionOutput`] is returned, otherwise
                 a `tuple` is returned where the first element is the sample tensor.
         """
+        sam2_segmentation_masks = check_sam2_conditions(
+            self.config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, sam2_segmentation_masks
+        )
+
         # By default samples have to be AT least a multiple of the overall upsampling factor.
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
         # However, the upsampling interpolation output size can be forced to fit any upsampling size
@@ -1036,40 +1052,3 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             return (sample,)
 
         return UNet2DConditionOutput(sample=sample)
-
-    @classmethod
-    def from_pretrained_orig(cls, seesr_model_path, subfolder=None, use_image_cross_attention=False, **kwargs):
-        if subfolder is not None:
-            # Use the SeeSR path to find the config, as it's the model we actually want
-            seesr_config_path = os.path.join(seesr_model_path, subfolder)
-        else:
-            seesr_config_path = seesr_model_path
-
-        # 1. Load the CONFIGURATION from the SeeSR model, not the base SD model.
-        #    This ensures all model parameters (like use_image_cross_attention) are correct.
-        config_file = os.path.join(seesr_config_path, 'config.json')
-        if not os.path.isfile(config_file):
-            raise RuntimeError(f"{config_file} does not exist")
-        with open(config_file, "r") as f:
-            config = json.load(f)
-
-        # Create the model from the SeeSR config
-        model = cls.from_config(config)
-
-        from diffusers.utils import SAFETENSORS_WEIGHTS_NAME
-
-        # 2. Load the WEIGHTS directly and exclusively from the SeeSR model file.
-        model_file_seesr = os.path.join(seesr_config_path, SAFETENSORS_WEIGHTS_NAME)
-        if not os.path.isfile(model_file_seesr):
-            raise RuntimeError(f"{model_file_seesr} does not exist")
-            
-        import safetensors
-        state_dict_seesr = safetensors.torch.load_file(model_file_seesr, device="cpu")
-        
-        # 3. Load the entire SeeSR state dict. `strict=False` is good practice in case
-        #    of minor mismatches, but it should ideally load cleanly.
-        model.load_state_dict(state_dict_seesr, strict=False)
-
-        logger.info(f"Successfully loaded UNet weights from SeeSR model at: {model_file_seesr}")
-
-        return model

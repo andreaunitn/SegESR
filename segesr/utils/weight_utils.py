@@ -72,11 +72,7 @@ def init_sam_weights(model, accelerator, attention_modules):
     for block_name, block in model_to_copy.named_modules():
         is_relevant_block = isinstance(block, (CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn))
 
-        if is_relevant_block and getattr(block, "use_sam2", False):
-            if not hasattr(block, "image_attentions"):
-                logger.warning(f"  - Block {block_name} is SAM2 enabled but has no 'image_attentions' to copy from. Skipping.")
-                continue
-
+        if is_relevant_block and hasattr(block, "image_attentions"):
             source_attns = block.image_attentions
             for target_attr_name in attention_modules:
                 if hasattr(block, target_attr_name):
@@ -114,7 +110,7 @@ def verify_weights(model, accelerator, attention_modules):
     for _, block in unwrapped_model.named_modules():
         is_relevant_block = isinstance(block, (CrossAttnDownBlock2D, CrossAttnUpBlock2D, UNetMidBlock2DCrossAttn))
 
-        if is_relevant_block and getattr(block, "use_sam2", False) and hasattr(block, "image_attentions"):
+        if is_relevant_block and hasattr(block, "image_attentions"):
             source_attns = block.image_attentions
 
             for target_attr_name in attention_modules:

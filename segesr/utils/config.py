@@ -1,5 +1,25 @@
 import argparse
+import os
+
 import yaml
+
+def load_config(path):
+    """
+    Reads a YAML config. A `base_config` key (path relative to the file) loads that config first;
+    the keys of this file override it.
+    """
+
+    with open(path, "r") as f:
+        config = yaml.safe_load(f) or {}
+
+    if not isinstance(config, dict):
+        raise ValueError(f"Config file '{path}' must contain a mapping of argument names to values.")
+
+    base_config = config.pop("base_config", None)
+    if base_config is not None:
+        config = {**load_config(os.path.join(os.path.dirname(path), base_config)), **config}
+
+    return config
 
 def parse_args_with_config(parser, input_args=None):
     """
@@ -22,11 +42,7 @@ def parse_args_with_config(parser, input_args=None):
     )
 
     if config_args.config is not None:
-        with open(config_args.config, "r") as f:
-            config = yaml.safe_load(f) or {}
-
-        if not isinstance(config, dict):
-            raise ValueError(f"Config file '{config_args.config}' must contain a mapping of argument names to values.")
+        config = load_config(config_args.config)
 
         valid_keys = {action.dest for action in parser._actions}
         unknown_keys = sorted(set(config) - valid_keys)

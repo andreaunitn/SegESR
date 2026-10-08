@@ -4,6 +4,9 @@ from transformers import PretrainedConfig
 from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
 
+# SegESR options stored in the UNet/ControlNet configs
+ARCHITECTURE_KEYS = ("attention_fusion", "use_sam2_image_attention", "use_sam2_segmentation_attention", "segment_routing")
+
 def import_model_class_from_model_name_or_path(pretrained_model_name_or_path, revision=None):
     """
     Dynamically loads the appropriate text encoder model class
@@ -50,6 +53,18 @@ def register_checkpoint_hooks(accelerator):
                 load_model = ControlNetModel.from_pretrained(input_dir, subfolder="controlnet")
             else:
                 load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+
+            # Never resume a run with another architecture (e.g. an ablation started in the same output_dir)
+            mismatched = {
+                key: {"checkpoint": load_model.config.get(key), "requested": model.config.get(key)}
+                for key in ARCHITECTURE_KEYS
+                if load_model.config.get(key) != model.config.get(key)
+            }
+            if mismatched:
+                raise ValueError(
+                    f"The checkpoint '{input_dir}' has another SegESR architecture: {mismatched}. "
+                    "Use a different `--output_dir` for each variant."
+                )
 
             model.register_to_config(**load_model.config)
             model.load_state_dict(load_model.state_dict())

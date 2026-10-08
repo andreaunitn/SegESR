@@ -10,7 +10,8 @@
 #
 # Usage (from the repository root):
 #   sbatch cluster/train.sh [CONFIG] [extra train.py flags...]
-#   e.g. sbatch cluster/train.sh configs/train_default.yaml --output_dir=preset/train_output/segesr_v2
+#   e.g. sbatch cluster/train.sh configs/train_segesr.yaml
+#        sbatch cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel --output_dir=preset/train_output/pafb
 #
 # The configs resume from the latest checkpoint of `output_dir`, so if the job hits the time limit of
 # the partition, submitting the same command again continues the training.

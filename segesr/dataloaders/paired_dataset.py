@@ -24,6 +24,7 @@ class PairedCaptionDataset(data.Dataset):
         seg_embeds_gt/<stem>.pt  (optional) SAM 2 mask decoder logits of the GT image
         gt_seg/<stem>.pt         (optional) SAM 2 binary masks of the GT image
 
+    The SAM 2 files are only read with `load_sam` (models with SAM 2 attentions).
     Files are matched by stem, so the per-folder listing order does not matter.
     Use `collate_fn` as the DataLoader collate function: the number of masks varies per image.
     """
@@ -34,10 +35,12 @@ class PairedCaptionDataset(data.Dataset):
             tokenizer=None,
             null_text_ratio=0.5,
             validation=False,
+            load_sam=True,
     ):
         super(PairedCaptionDataset, self).__init__()
 
         self.null_text_ratio = null_text_ratio
+        self.load_sam = load_sam
         self.lr_list = []
         self.gt_list = []
         self.tag_path_list = []
@@ -60,7 +63,7 @@ class PairedCaptionDataset(data.Dataset):
             gt_paths = sorted(glob.glob(os.path.join(root_folder, 'gt', '*.png')))
             gt_seg_dir = os.path.join(root_folder, 'gt_seg')
             has_gt_seg = os.path.isdir(gt_seg_dir)
-            has_gt_sam = all(os.path.isdir(os.path.join(root_folder, d)) for d in ('sam_embeds_gt', 'seg_embeds_gt'))
+            has_gt_sam = load_sam and all(os.path.isdir(os.path.join(root_folder, d)) for d in ('sam_embeds_gt', 'seg_embeds_gt'))
 
             for gt_path in gt_paths:
                 stem = Path(gt_path).stem
@@ -68,8 +71,9 @@ class PairedCaptionDataset(data.Dataset):
                 self.lr_list.append(self._require(root_folder, 'sr_bicubic', stem, '.png'))
                 self.tag_path_list.append(self._require(root_folder, 'tag', stem, '.txt'))
                 self.dape_img_embeds_list.append(self._require(root_folder, 'dape_embeds', stem, '.pt'))
-                self.sam_img_embeds_list.append(self._require(root_folder, 'sam_embeds', stem, '.pt'))
-                self.sam_seg_embeds_list.append(self._require(root_folder, 'seg_embeds', stem, '.pt'))
+                if load_sam:
+                    self.sam_img_embeds_list.append(self._require(root_folder, 'sam_embeds', stem, '.pt'))
+                    self.sam_seg_embeds_list.append(self._require(root_folder, 'seg_embeds', stem, '.pt'))
 
                 if has_gt_seg:
                     self.gt_seg_list.append(self._require(root_folder, 'gt_seg', stem, '.pt'))
@@ -146,8 +150,9 @@ class PairedCaptionDataset(data.Dataset):
         example["input_ids"] = self.tokenize_caption(caption=tag).squeeze(0)
 
         example["ram_values"] = torch.load(self.dape_img_embeds_list[index], map_location="cpu").squeeze(0)
-        example["sam_img_embeds"] = torch.load(self.sam_img_embeds_list[index], map_location="cpu").squeeze(0)
-        example["sam_seg_embeds"] = torch.load(self.sam_seg_embeds_list[index], map_location="cpu").squeeze(1)
+        if self.load_sam:
+            example["sam_img_embeds"] = torch.load(self.sam_img_embeds_list[index], map_location="cpu").squeeze(0)
+            example["sam_seg_embeds"] = torch.load(self.sam_seg_embeds_list[index], map_location="cpu").squeeze(1)
 
         if self.has_gt_sam:
             example["sam_img_embeds_gt"] = torch.load(self.sam_img_embeds_gt_list[index], map_location="cpu").squeeze(0)

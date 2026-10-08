@@ -75,7 +75,7 @@ python test.py --config configs/test_default.yaml \
 
 SAM 2.1 weights are downloaded from the Hugging Face Hub (`facebook/sam2.1-hiera-large`) on first use.
 
-`segment_routing` must match the training config. `sam_refresh_timesteps` (default `[750, 500, 250]`) sets when the SAM 2 conditions are recomputed on the predicted clean image; each refresh decodes the current estimate and runs SAM 2 once, and `--sam_refresh_timesteps` with no value disables it.
+The architecture is read from the checkpoint, so `test.py` works the same for the SeeSR baseline (`--finetuned_model_path preset/models/seesr`) and for any SegESR variant. `sam_refresh_timesteps` (default `[750, 500, 250]`) sets when the SAM 2 conditions are recomputed on the predicted clean image; each refresh decodes the current estimate and runs SAM 2 once, and `--sam_refresh_timesteps` with no value disables it.
 
 ## 🌈 Train 
 #### Step 1: Prepare training data
@@ -131,10 +131,24 @@ your_training_datasets/
 #### Step 2: Training SegESR
 
 ```bash
-./scripts/run_train.sh configs/train_default.yaml
+./scripts/run_train.sh configs/train_segesr.yaml    # full SegESR
+./scripts/run_train.sh configs/train_seesr.yaml     # SeeSR baseline, fine-tuned with the same data and settings
 ```
 
-Every key of the YAML config is a `train.py` argument, and flags passed on the command line override the config (e.g. `./scripts/run_train.sh configs/train_default.yaml --max_train_steps=1000`). `configs/train_sam_ablation.yaml` trains the same model without the SAM 2 perceptual loss.
+Every key of the YAML config is a `train.py` argument, and flags passed on the command line override the config (e.g. `--max_train_steps=1000`). `configs/train_segesr.yaml` only adds the SegESR components to `configs/train_seesr.yaml` (`base_config` key), so each component can be switched on one at a time, starting from the baseline:
+
+| Step | Component | Training flags added to `configs/train_seesr.yaml` |
+|---|---|---|
+| 0 | SeeSR baseline (text → DAPE attention, sequential) | — |
+| 1 | PAFB: parallel attentions + fusion conv | `--attention_fusion=parallel` |
+| 2 | + SICA (SAM 2 image embeddings) | step 1 + `--use_sam2_image_attention` |
+| 3 | + SMCA (SAM 2 segment tokens) | step 2 + `--use_sam2_segmentation_attention` |
+| 4 | + segment routing | step 3 + `--segment_routing` |
+| 5 | + SAM 2 perceptual loss | step 4 + `--use_sam_loss` |
+| 6 | + GT-derived SAM 2 conditions = full SegESR | step 5 + `--clean_sam_prob=0.5` |
+| 7 | + SAM 2 refresh at inference | test-time `sam_refresh_timesteps` (on by default; `--sam_refresh_timesteps` alone disables it) |
+
+Give each run its own `--output_dir`. The architecture flags are stored in the checkpoint configs, and `test.py` rebuilds the model from them. The SAM 2 branches start with zero weight in the fusion conv, so every SAM 2 variant starts exactly from the PAFB model.
 
 ## 🖥️ SLURM cluster
 
@@ -145,7 +159,7 @@ sbatch cluster/setup_env.sh                                   # once: container,
 sbatch cluster/download_models.sh                             # once: SD 2 base, SeeSR + DAPE, RAM, tiny VAE
 sbatch cluster/download_datasets.sh                           # once: test sets, LSDIR + FFHQ training subset
 sbatch cluster/prepare_data.sh preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
-sbatch cluster/train.sh configs/train_default.yaml --output_dir=preset/train_output/segesr_v2
+sbatch cluster/train.sh configs/train_segesr.yaml
 sbatch cluster/test.sh preset/train_output/segesr_v2
 ```
 

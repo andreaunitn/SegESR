@@ -1,7 +1,8 @@
 """
 CPU smoke tests of the SegESR models and pipeline with tiny random weights: a training step
 (ControlNet + UNet, gradient checkpointing, batched variable mask counts, clean SAM 2 conditions)
-and the denoising loop (classifier-free guidance, latent tiling, segment routing, SAM 2 refresh).
+and the denoising loop (classifier-free guidance, latent tiling, segment routing, SAM 2 refresh),
+for the SeeSR baseline, PAFB and the full SegESR architecture.
 
 No pretrained weights or GPU are needed; SAM 2 is replaced by a stub.
 
@@ -24,7 +25,12 @@ TEXT_DIM = 32
 DAPE_DIM = 512
 SAM_DIM = 256
 
-def make_models():
+SEESR = {}
+PAFB = dict(attention_fusion="parallel")
+FULL = dict(attention_fusion="parallel", use_sam2_image_attention=True, use_sam2_segmentation_attention=True, segment_routing=True)
+NO_ROUTING = {**FULL, "segment_routing": False}
+
+def make_models(**architecture):
     torch.manual_seed(0)
     unet = UNet2DConditionModel(
         sample_size=16,
@@ -36,6 +42,7 @@ def make_models():
         down_block_types=("CrossAttnDownBlock2D", "DownBlock2D"),
         up_block_types=("UpBlock2D", "CrossAttnUpBlock2D"),
         use_image_cross_attention=True,
+        **architecture,
     )
     controlnet = ControlNetModel.from_unet(unet, use_image_cross_attention=True)
     return unet, controlnet
@@ -49,8 +56,9 @@ def stub_sam_conditions(image, sam_generator, max_masks=None):
     logits[2, :, :, :100] = 10.0
     return torch.randn(1, SAM_DIM, 64, 64), logits
 
-def test_training_step_backpropagates_into_segmentation_attention():
-    unet, controlnet = make_models()
+@pytest.mark.parametrize("architecture", [SEESR, PAFB, FULL], ids=["seesr", "pafb", "full"])
+def test_training_step(architecture):
+    unet, controlnet = make_models(**architecture)
     unet.enable_gradient_checkpointing()
     controlnet.enable_gradient_checkpointing()
     unet.train()
@@ -71,7 +79,8 @@ def test_training_step_backpropagates_into_segmentation_attention():
     timesteps = torch.tensor([10, 900])
     text = torch.randn(2, 7, TEXT_DIM)
     dape = torch.randn(2, 4, DAPE_DIM)
-    sam_kwargs = get_sam_kwargs(batch, "cpu", torch.float32, True, mask_size=latents.shape[-2:], use_clean=torch.tensor([True, False]))
+    sam_kwargs = get_sam_kwargs(batch, "cpu", torch.float32, unet.config, mask_size=latents.shape[-2:], use_clean=torch.tensor([True, False]))
+    assert bool(sam_kwargs) == (architecture is FULL)
 
     down_block_res_samples, mid_block_res_sample = controlnet(
         latents, timesteps, encoder_hidden_states=text, controlnet_cond=torch.rand(2, 3, 128, 128),
@@ -83,27 +92,32 @@ def test_training_step_backpropagates_into_segmentation_attention():
         image_encoder_hidden_states=dape, **sam_kwargs,
     ).sample
     model_pred.square().mean().backward()
-
     assert model_pred.shape == latents.shape
 
-    unet_grads = [p.grad for name, p in unet.named_parameters() if "sam2_segmentation_attentions" in name]
-    assert unet_grads and all(g is not None and g.abs().sum() > 0 for g in unet_grads)
+    if architecture is not SEESR:
+        # The fusion convs learn from the first step
+        assert all(m.fusion_conv.weight.grad.abs().sum() > 0 for m in unet.modules() if hasattr(m, "fusion_conv"))
 
-    # The ControlNet output convs are zero-initialized, so its inner gradients are exactly zero at the
-    # first step: only check that the segmentation attentions are part of the graph
-    controlnet_grads = [p.grad for name, p in controlnet.named_parameters() if "sam2_segmentation_attentions" in name]
-    assert controlnet_grads and all(g is not None for g in controlnet_grads)
+    if architecture is FULL:
+        # The SAM 2 branches start with zero fusion weight: their attentions get gradients once the fusion
+        # conv has moved, but they are already part of the graph
+        for model in (unet, controlnet):
+            grads = [p.grad for name, p in model.named_parameters() if "sam2_" in name]
+            assert grads and all(g is not None for g in grads)
 
 @pytest.mark.parametrize(
-    "size, tile_size, refresh_timesteps, segment_routing",
+    "architecture, size, tile_size, refresh_timesteps",
     [
-        (128, 96, None, True),          # 16x16 latents, not tiled, no refresh
-        (256, 24, [700, 400], True),    # 32x32 latents, 24x24 tiles, two SAM 2 refreshes
-        (256, 24, [700, 400], False),   # same, without segment routing
+        (SEESR, 256, 24, [700, 400]),       # baseline: no SAM 2 at all, the refresh is ignored
+        (PAFB, 128, 96, None),              # 16x16 latents, not tiled
+        (FULL, 128, 96, None),
+        (FULL, 256, 24, [700, 400]),        # 32x32 latents, 24x24 tiles, two SAM 2 refreshes
+        (NO_ROUTING, 256, 24, [700, 400]),  # SAM 2 attentions without segment routing
     ],
+    ids=["seesr-tiled-refresh", "pafb", "full", "full-tiled-refresh", "no-routing-tiled-refresh"],
 )
-def test_pipeline_denoising_loop(monkeypatch, size, tile_size, refresh_timesteps, segment_routing):
-    unet, controlnet = make_models()
+def test_pipeline_denoising_loop(monkeypatch, architecture, size, tile_size, refresh_timesteps):
+    unet, controlnet = make_models(**architecture)
     unet.eval()
     controlnet.eval()
     vae = AutoencoderKL(
@@ -125,34 +139,38 @@ def test_pipeline_denoising_loop(monkeypatch, size, tile_size, refresh_timesteps
         return stub_sam_conditions(image, sam_generator, max_masks)
     monkeypatch.setattr(pipeline_module, "compute_sam2_conditions", sam_stub)
 
-    unet_masks = []
+    unet_inputs = []
     unet_forward = unet.forward
     def spy(*args, **kwargs):
-        masks = kwargs["sam2_segmentation_masks"]
-        unet_masks.append(None if masks is None else masks.shape)
+        unet_inputs.append({k: v.shape for k, v in kwargs.items() if k.startswith("sam2_")})
         return unet_forward(*args, **kwargs)
     monkeypatch.setattr(unet, "forward", spy)
 
+    uses_sam2 = architecture in (FULL, NO_ROUTING)
     with torch.no_grad():
         images = pipeline(
             prompt=None, image=torch.rand(1, 3, size, size),
             prompt_embeds=torch.randn(1, 7, TEXT_DIM), negative_prompt_embeds=torch.randn(1, 7, TEXT_DIM),
             num_inference_steps=6, guidance_scale=5.0, height=size, width=size, start_point="lr", start_steps=999,
             ram_encoder_hidden_states=torch.randn(1, 4, DAPE_DIM),
-            sam2_encoder_hidden_states=torch.randn(1, SAM_DIM, 64, 64),
-            sam2_segmentation_encoder_hidden_states=torch.randn(1, 5, 256, 256) * 5,
-            segment_routing=segment_routing,
-            sam_generator=object() if refresh_timesteps else None, sam_refresh_timesteps=refresh_timesteps,
+            sam2_encoder_hidden_states=torch.randn(1, SAM_DIM, 64, 64) if uses_sam2 else None,
+            sam2_segmentation_encoder_hidden_states=torch.randn(1, 5, 256, 256) * 5 if uses_sam2 else None,
+            sam_generator=object(), sam_refresh_timesteps=refresh_timesteps,
             latent_tiled_size=tile_size, latent_tiled_overlap=4, args=True, output_type="np",
         ).images
 
     assert images.shape == (1, size, size, 3)
     assert torch.isfinite(torch.from_numpy(images)).all()
 
-    # One SAM 2 refresh per threshold, on the full-size decoded image
-    assert sam_calls == [(size, size)] * len(refresh_timesteps or [])
+    # One SAM 2 refresh per threshold, on the full-size decoded image, for models with SAM 2 attentions only
+    assert sam_calls == ([(size, size)] * len(refresh_timesteps or []) if uses_sam2 else [])
 
-    # Masks of the current tile (or of the whole latents), duplicated for classifier-free guidance
+    # Only the SAM 2 inputs of the architecture; masks of the current tile, duplicated for classifier-free guidance
     latent_tile = min(tile_size, size // 8)
-    expected = [torch.Size([2, 8, latent_tile, latent_tile]) if segment_routing else None] * len(unet_masks)
-    assert unet_masks == expected
+    expected = {}
+    if uses_sam2:
+        expected = {"sam2_encoder_hidden_states": torch.Size([2, SAM_DIM, 64, 64]),
+                    "sam2_segmentation_encoder_hidden_states": torch.Size([2, 8, SAM_DIM])}
+        if architecture["segment_routing"]:
+            expected["sam2_segmentation_masks"] = torch.Size([2, 8, latent_tile, latent_tile])
+    assert unet_inputs == [expected] * len(unet_inputs)

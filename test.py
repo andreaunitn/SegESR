@@ -28,7 +28,7 @@ from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
 from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
 from segesr.utils import compute_sam2_conditions, load_sam2, parse_args_with_config, seg_logits_to_hidden_states
-from segesr.utils.sam_utils import MAX_MASKS
+from segesr.utils.sam_utils import MAX_MASKS, model_uses_sam2
 from segesr.utils.color_fix import adain_color_fix, wavelet_color_fix
 
 tensor_transforms = transforms.Compose([
@@ -116,26 +116,47 @@ def main(args):
 
     pipeline = load_segesr_pipeline(args, accelerator, args.enable_xformers_memory_efficient_attention)
     model = load_tag_model(args, accelerator.device)
-    sam_generator = load_sam2(
-        model_size=args.sam_model_size,
-        device=accelerator.device,
-        points_per_side=16,
-        points_per_batch=128,
-        stability_score_thresh=0.9,
+
+    # The architecture is read from the checkpoint config; SAM 2 is only needed by models with SAM 2 attentions
+    config = pipeline.unet.config
+    uses_sam2 = model_uses_sam2(config)
+    print(
+        f"Model: attention_fusion={config.attention_fusion}, SICA={config.use_sam2_image_attention}, "
+        f"SMCA={config.use_sam2_segmentation_attention}, segment_routing={config.segment_routing}, "
+        f"SAM 2 refresh={args.sam_refresh_timesteps if uses_sam2 and args.sam_refresh_timesteps else 'off'}"
     )
+
+    sam_generator = None
+    if uses_sam2:
+        sam_generator = load_sam2(
+            model_size=args.sam_model_size,
+            device=accelerator.device,
+            points_per_side=16,
+            points_per_batch=128,
+            stability_score_thresh=0.9,
+        )
 
     if accelerator.is_main_process:
         generator = torch.Generator(device=accelerator.device)
-        if args.seed is not None:
-            generator.manual_seed(args.seed)
 
         if os.path.isdir(args.image_path):
             image_names = sorted(glob.glob(f"{args.image_path}/*.*"))
         else:
             image_names = [args.image_path]
 
+        sample_dirs = [os.path.join(args.output_dir, f"sample{str(i).zfill(2)}") for i in range(args.sample_times)]
+
         for image_idx, image_name in enumerate(image_names):
+            output_name = f"{Path(image_name).stem}.png"
+            if args.skip_existing and all(os.path.isfile(os.path.join(d, output_name)) for d in sample_dirs):
+                print(f"Skipping {image_idx} ({output_name}): already generated.")
+                continue
+
             print(f"================== process {image_idx} imgs... ===================")
+
+            # One seed per image: results do not depend on which images were processed before (e.g. after a resume)
+            if args.seed is not None:
+                generator.manual_seed(args.seed + image_idx)
             validation_image = Image.open(image_name).convert("RGB")
 
             validation_prompt, ram_encoder_hidden_states = get_validation_prompt(args, validation_image, model, accelerator.device)
@@ -143,9 +164,11 @@ def main(args):
             negative_prompt = args.negative_prompt # dirty, messy, low quality, frames, deformed,
 
             # SAM 2 conditions are computed on the original LR image, as for the training data
-            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(validation_image, sam_generator, max_masks=MAX_MASKS)
-            sam2_encoder_hidden_states = sam_img_embeds.to(accelerator.device)
-            sam2_segmentation_encoder_hidden_states = seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device)
+            sam2_encoder_hidden_states = sam2_segmentation_encoder_hidden_states = None
+            if uses_sam2:
+                sam_img_embeds, sam_seg_logits = compute_sam2_conditions(validation_image, sam_generator, max_masks=MAX_MASKS)
+                sam2_encoder_hidden_states = sam_img_embeds.to(accelerator.device)
+                sam2_segmentation_encoder_hidden_states = seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device)
 
             if args.save_prompts:
                 txt_save_path = os.path.join(txt_path, f"{Path(image_name).stem}.txt")
@@ -166,8 +189,7 @@ def main(args):
 
             print(f"input size: {height}x{width}")
 
-            for sample_idx in range(args.sample_times):
-                sample_dir = os.path.join(args.output_dir, f"sample{str(sample_idx).zfill(2)}")
+            for sample_dir in sample_dirs:
                 os.makedirs(sample_dir, exist_ok=True)
 
                 with torch.autocast("cuda"):
@@ -177,7 +199,6 @@ def main(args):
                             start_steps=args.start_steps, start_point=args.start_point, ram_encoder_hidden_states=ram_encoder_hidden_states,
                             sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
                             sam2_encoder_hidden_states=sam2_encoder_hidden_states,
-                            segment_routing=args.segment_routing,
                             sam_generator=sam_generator, sam_refresh_timesteps=args.sam_refresh_timesteps,
                             latent_tiled_size=args.latent_tiled_size, latent_tiled_overlap=args.latent_tiled_overlap,
                             args=args,
@@ -191,7 +212,7 @@ def main(args):
                 # Bring the output back to exactly `upscale` x the original LR size
                 image = image.resize((ori_width*rscale, ori_height*rscale))
 
-                image.save(os.path.join(sample_dir, f"{Path(image_name).stem}.png"))
+                image.save(os.path.join(sample_dir, output_name))
 
 def parse_args(input_args=None):
     parser = argparse.ArgumentParser(description="SegESR inference script.")
@@ -200,10 +221,9 @@ def parse_args(input_args=None):
     parser.add_argument("--ram_path", type=str, default="preset/models/ram_swin_large_14m.pth")
     parser.add_argument("--ram_ft_path", type=str, default=None, help="Path to the DAPE weights.")
     parser.add_argument("--sam_model_size", type=str, default="large", choices=["tiny", "small", "base_plus", "large"])
-    parser.add_argument("--segment_routing", action="store_true",
-                        help="Restrict the segmentation attention of each pixel to its segments. Use the same setting as in training.")
     parser.add_argument("--sam_refresh_timesteps", type=int, nargs="*", default=None,
-                        help="Diffusion timesteps (e.g. 750 500 250) at which the SAM 2 conditions are recomputed on the predicted clean image.")
+                        help="Diffusion timesteps (e.g. 750 500 250) at which the SAM 2 conditions are recomputed on the predicted clean image"
+                             " (models with SAM 2 attentions only). Pass the flag without values to disable it.")
     parser.add_argument("--prompt", type=str, default="") # user can add self-prompt to improve the results
     parser.add_argument("--added_prompt", type=str, default="clean, high-resolution, 8k")
     parser.add_argument("--negative_prompt", type=str, default="dotted, noise, blur, lowres, smooth")
@@ -226,6 +246,7 @@ def parse_args(input_args=None):
     parser.add_argument("--start_steps", type=int, default=999) # defaults set to 999.
     parser.add_argument("--start_point", type=str, choices=["lr", "noise"], default="lr") # LR Embedding Strategy, choose 'lr latent + 999 steps noise' as diffusion start point.
     parser.add_argument("--save_prompts", action="store_true")
+    parser.add_argument("--skip_existing", action="store_true", help="Skip the images already generated (to resume an interrupted run).")
     args = parse_args_with_config(parser, input_args)
 
     for required in ("finetuned_model_path", "image_path", "output_dir"):

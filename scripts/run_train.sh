@@ -2,8 +2,9 @@
 # Train SegESR.
 #
 # Usage: ./scripts/run_train.sh [CONFIG] [extra train.py flags...]
-#   CONFIG defaults to configs/train_default.yaml. Extra flags override the config, e.g.
-#   ./scripts/run_train.sh configs/train_sam_ablation.yaml --max_train_steps=1000
+#   CONFIG defaults to configs/train_segesr.yaml (full model); configs/train_seesr.yaml is the baseline.
+#   Extra flags override the config, e.g.
+#   ./scripts/run_train.sh configs/train_seesr.yaml --attention_fusion=parallel --output_dir=preset/train_output/pafb
 #
 # Environment variables:
 #   CUDA_VISIBLE_DEVICES  GPUs to use (default: 0)
@@ -13,7 +14,7 @@ set -u
 
 cd "$(dirname "$0")/.." || exit 1
 
-CONFIG="${1:-configs/train_default.yaml}"
+CONFIG="${1:-configs/train_segesr.yaml}"
 shift $(( $# > 0 ? 1 : 0 ))
 
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"

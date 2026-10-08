@@ -47,7 +47,7 @@ from diffusers.pipelines.controlnet.multicontrolnet import MultiControlNetModel
 
 from segesr.pipelines.vaehook import VAEHook, perfcount
 from segesr.utils.diffusion_utils import predict_original_latents
-from segesr.utils.sam_utils import MAX_MASKS, build_segment_conditions, compute_sam2_conditions, pad_seg_logits
+from segesr.utils.sam_utils import MAX_MASKS, compute_sam2_conditions, model_uses_sam2, pad_seg_logits, sam2_model_kwargs
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -456,26 +456,22 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
 
         return prompt_embeds, ram_encoder_hidden_states
 
-    def _prepare_sam2_conditions(self, img_embeds, seg_logits, latent_size, do_classifier_free_guidance, segment_routing):
+    def _prepare_sam2_conditions(self, img_embeds, seg_logits, latent_size, do_classifier_free_guidance):
         """
-        SAM 2 image embeddings (B, 256, 64, 64) and mask logits (B, N, 256, 256) -> UNet/ControlNet kwargs.
-        The segment masks are built at the full `latent_size` and cropped per latent tile in the denoising loop.
+        SAM 2 image embeddings (B, 256, 64, 64) and mask logits (B, N, 256, 256) -> the UNet/ControlNet kwargs
+        their config uses (none for a model without SAM 2 attentions). The segment masks are built at the full
+        `latent_size` and cropped per latent tile in the denoising loop.
         """
 
-        segment_tokens, segment_masks = build_segment_conditions(img_embeds, seg_logits, latent_size)
-        kwargs = {
-            "sam2_encoder_hidden_states": img_embeds.to(self.unet.dtype),
-            "sam2_segmentation_encoder_hidden_states": segment_tokens.to(self.unet.dtype),
-            "sam2_segmentation_masks": segment_masks.to(self.unet.dtype) if segment_routing else None,
-        }
+        kwargs = sam2_model_kwargs(self.unet.config, img_embeds, seg_logits, latent_size, self.unet.dtype)
 
         if do_classifier_free_guidance:
-            kwargs = {k: torch.cat([v, v]) if v is not None else None for k, v in kwargs.items()}
+            kwargs = {k: torch.cat([v, v]) for k, v in kwargs.items()}
 
         return kwargs
 
     @torch.no_grad()
-    def _refresh_sam2_conditions(self, pred_original_latents, sam_generator, latent_size, do_classifier_free_guidance, segment_routing):
+    def _refresh_sam2_conditions(self, pred_original_latents, sam_generator, latent_size, do_classifier_free_guidance):
         """
         Recomputes the SAM 2 conditions on the current estimate of the clean image, decoded from the
         predicted x_0, instead of the degraded LR input.
@@ -494,7 +490,7 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
         img_embeds = torch.cat(img_embeds).to(device)
         seg_logits = pad_seg_logits(seg_logits).to(device)
 
-        return self._prepare_sam2_conditions(img_embeds, seg_logits, latent_size, do_classifier_free_guidance, segment_routing)
+        return self._prepare_sam2_conditions(img_embeds, seg_logits, latent_size, do_classifier_free_guidance)
     
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.run_safety_checker
     def run_safety_checker(self, image, device, dtype):
@@ -850,7 +846,6 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
         ram_encoder_hidden_states=None,
         sam2_encoder_hidden_states=None,
         sam2_segmentation_encoder_hidden_states=None,
-        segment_routing=True,
         sam_generator=None,
         sam_refresh_timesteps=None,
         latent_tiled_size=320,
@@ -1041,14 +1036,18 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
             latents = self.scheduler.add_noise(latents_condition_image[0:1, ...], latents, start_steps_tensor)
     
 
-        # SAM 2 conditions: segment tokens and masks at the latent resolution
+        # SAM 2 conditions (only for a model with SAM 2 attentions): segment tokens and masks at the latent resolution
         latent_size = latents.shape[-2:]
-        sam2_kwargs = self._prepare_sam2_conditions(
-            sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, latent_size, do_classifier_free_guidance, segment_routing
-        )
+        uses_sam2 = model_uses_sam2(self.unet.config)
+        sam2_kwargs = {}
+        if uses_sam2:
+            sam2_kwargs = self._prepare_sam2_conditions(
+                sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, latent_size, do_classifier_free_guidance
+            )
 
         # Timesteps at which the SAM 2 conditions are recomputed on the predicted clean image
-        pending_refresh_timesteps = sorted(sam_refresh_timesteps or [], reverse=True) if sam_generator is not None else []
+        refresh = uses_sam2 and sam_generator is not None
+        pending_refresh_timesteps = sorted(sam_refresh_timesteps or [], reverse=True) if refresh else []
         pred_original_latents = None
 
         # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
@@ -1075,7 +1074,7 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                     while pending_refresh_timesteps and t <= pending_refresh_timesteps[0]:
                         pending_refresh_timesteps.pop(0)
                     sam2_kwargs = self._refresh_sam2_conditions(
-                        pred_original_latents, sam_generator, latent_size, do_classifier_free_guidance, segment_routing
+                        pred_original_latents, sam_generator, latent_size, do_classifier_free_guidance
                     )
 
                 # expand the latents if we are doing classifier free guidance
@@ -1180,7 +1179,7 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
 
                                 # Segment masks of the current tile (the segment tokens are global)
                                 tile_sam2_kwargs = dict(sam2_kwargs)
-                                if sam2_kwargs["sam2_segmentation_masks"] is not None:
+                                if "sam2_segmentation_masks" in sam2_kwargs:
                                     tile_sam2_kwargs["sam2_segmentation_masks"] = sam2_kwargs["sam2_segmentation_masks"][
                                         :, :, input_start_y:input_end_y, input_start_x:input_end_x
                                     ]

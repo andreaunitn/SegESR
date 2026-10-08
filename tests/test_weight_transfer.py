@@ -34,8 +34,10 @@ def make_block(use_sam2=True):
         add_downsample=False,
         use_image_cross_attention=True,
         image_cross_attention_dim=DAPE_DIM,
-        use_sam2=use_sam2,
-        seg_cross_attention_dim=SAM_DIM,
+        attention_fusion="parallel" if use_sam2 else "sequential",
+        use_sam2_image_attention=use_sam2,
+        use_sam2_segmentation_attention=use_sam2,
+        sam2_cross_attention_dim=SAM_DIM,
     )
 
 class TinyModel(nn.Module):

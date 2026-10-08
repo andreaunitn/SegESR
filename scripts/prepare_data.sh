@@ -33,7 +33,14 @@ WITH_GT_SEG="${WITH_GT_SEG:-false}"
 export PYTHONWARNINGS="ignore"
 
 echo "--- Step 1/4: Degraded LR / GT pairs ---"
-python data_tools/make_paired_data.py --gt_path "${GT_DIRS[@]}" --save_dir "$SAVE_DIR" --epoch "$EPOCHS"
+# Run once: regenerating the pairs would no longer match the tags and embeddings of the next steps
+PAIRS_DONE="$SAVE_DIR/.paired_data.done"
+if [ -f "$PAIRS_DONE" ]; then
+    echo "Pairs already generated (delete '$PAIRS_DONE' to regenerate them)."
+else
+    python data_tools/make_paired_data.py --gt_path "${GT_DIRS[@]}" --save_dir "$SAVE_DIR" --epoch "$EPOCHS"
+    touch "$PAIRS_DONE"
+fi
 
 echo "--- Step 2/4: RAM tags ---"
 python data_tools/make_tags.py --root_path "$SAVE_DIR" --skip_existing
