@@ -6,7 +6,7 @@ Downloads the pretrained models and the datasets used by SegESR into `preset/`:
              preset/models/ram_swin_large_14m.pth    RAM
              preset/models/tiny_vae                  TAESD, used by the perceptual losses
     test     preset/datasets/test_datasets/{DIV2K,RealSR,DRealSR}/{test_LR,test_HR}   StableSR test sets
-    train    preset/datasets/train_datasets/LSDIR/finetune_subset   15% of LSDIR + first 5K FFHQ images
+    train    preset/datasets/train_datasets/LSDIR/finetune_subset   15% of LSDIR + first 1.5K FFHQ images
 
 LSDIR is gated on Hugging Face: accept its terms at https://huggingface.co/ofsoundof/LSDIR and provide a
 read token (`HF_TOKEN` environment variable or ~/.cache/huggingface/token). RealLR200 is only distributed
@@ -157,7 +157,8 @@ def main():
     parser.add_argument("--root", type=str, default="preset")
     parser.add_argument("--what", nargs="+", default=["models", "test", "train"], choices=["models", "test", "train"])
     parser.add_argument("--lsdir_fraction", type=float, default=0.15, help="Fraction of LSDIR randomly sampled for training.")
-    parser.add_argument("--ffhq_count", type=int, default=5000, help="Number of FFHQ images (the first ones) added for training.")
+    parser.add_argument("--ffhq_count", type=int, default=1500,
+                        help="Number of FFHQ images (the first ones) added for training. The default keeps the face share of SeeSR (10K FFHQ for 85K LSDIR).")
     parser.add_argument("--seed", type=int, default=42, help="Seed of the LSDIR sampling.")
     parser.add_argument("--delete_full_lsdir", action="store_true", help="Delete the full extracted LSDIR (~155 GB) once the subset is built.")
     args = parser.parse_args()

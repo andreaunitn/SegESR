@@ -6,7 +6,7 @@
 #SBATCH --output=slurm_logs/%x_%j.log
 #
 # Downloads the datasets into preset/datasets: the StableSR test sets (DIV2K, RealSR, DRealSR) and the
-# training subset (15% of LSDIR + first 5K FFHQ images). The full LSDIR (~155 GB) is downloaded first.
+# training subset (15% of LSDIR + first 1.5K FFHQ images). The full LSDIR (~155 GB) is downloaded first.
 # No GPU is requested; add `#SBATCH --gpus=1` if the partition only accepts GPU jobs.
 #
 # LSDIR is gated on Hugging Face: accept its terms at https://huggingface.co/ofsoundof/LSDIR and save a

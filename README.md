@@ -79,7 +79,7 @@ SAM 2.1 weights are downloaded from the Hugging Face Hub (`facebook/sam2.1-hiera
 
 ## 🌈 Train 
 #### Step 1: Prepare training data
-Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR was trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled + the first 5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset). Put the sampled LSDIR images and the FFHQ images into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
+Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR is trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled + the first 1.5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset), which keeps the share of face images of SeeSR (LSDIR + 10K FFHQ). Put the sampled LSDIR images and the FFHQ images into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
 
 The whole pipeline (degraded pairs, RAM tags, DAPE embeddings, SAM 2 embeddings and mask logits of the LR and GT images) can be run with:
 
