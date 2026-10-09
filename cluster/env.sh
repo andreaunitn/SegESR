@@ -9,6 +9,9 @@ SEGESR_VENV="${SEGESR_VENV:-$HOME/venvs/segesr}"
 # Packages in ~/.local must not shadow the ones of the virtual environment
 export PYTHONNOUSERSITE=1
 
+# Write Python output to the job log immediately (it is buffered by default when not printed to a terminal)
+export PYTHONUNBUFFERED=1
+
 # Runs a command inside the container (with GPU support), with the SegESR virtual environment active.
 in_container() {
     singularity exec --nv "$SEGESR_SIF" bash -c 'source "$0/bin/activate" && exec "$@"' "$SEGESR_VENV" "$@"

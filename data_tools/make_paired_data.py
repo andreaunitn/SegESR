@@ -63,11 +63,14 @@ args_training_dataset['use_rot'] = False
 
 train_dataset = RealESRGANDataset(args_training_dataset)
 batch_size = args.batch_size
+# One loading process per available CPU (up to 11), keeping one CPU for the main process
+num_workers = min(11, len(os.sched_getaffinity(0)) - 1)
+print(f"Loading the images with {num_workers} worker processes")
 train_dataloader = torch.utils.data.DataLoader(
     train_dataset,
     shuffle=False,
     batch_size=batch_size,
-    num_workers=11,
+    num_workers=num_workers,
     drop_last=True,
 )
 

@@ -2,7 +2,8 @@
 #SBATCH --job-name=segesr_data
 #SBATCH --partition=department_only
 #SBATCH --gpus=1
-#SBATCH --mem=16G
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=32G
 #SBATCH --output=slurm_logs/%x_%j.log
 #
 # Builds the SegESR training folder (scripts/prepare_data.sh) on the cluster.
