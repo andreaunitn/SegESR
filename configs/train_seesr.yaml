@@ -33,8 +33,8 @@ learning_rate: 1.0e-6          # pre-existing SeeSR modules (DAPE attentions), k
 finetune_lr: 1.0e-5            # new modules (fusion convs + SAM 2 attentions)
 lr_scheduler: constant_with_warmup
 lr_warmup_steps: 500
-train_batch_size: 1            # >1 works (masks are padded per batch) if the GPU memory allows it
-gradient_accumulation_steps: 4
+train_batch_size: 2            # 2 x 2 = 4 samples per update; faster than 1 x 4 and fits in 22 GB (full model)
+gradient_accumulation_steps: 2  # keep train_batch_size x gradient_accumulation_steps = 4 for every run
 max_train_steps: 30000
 checkpointing_steps: 5000      # divides max_train_steps, so the last step is saved as a checkpoint too
 resume_from_checkpoint: latest
