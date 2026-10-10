@@ -884,7 +884,11 @@ def main(args):
     if accelerator.is_main_process:
         # Trackers (e.g. tensorboard) only accept scalar config values
         tracker_config = {k: v for k, v in vars(args).items() if isinstance(v, (int, float, str, bool))}
-        accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
+        # TensorBoard would store the config as "hparams" in an extra, curve-less run: write it as text instead
+        accelerator.init_trackers(args.tracker_project_name, config=None if args.report_to == "tensorboard" else tracker_config)
+        writer = get_tensorboard_writer(accelerator)
+        if writer is not None:
+            writer.add_text("config", "\n".join(f"    {k}: {v}" for k, v in sorted(tracker_config.items())), 0)
 
         # The validation input (bicubic x4), to compare with the validation samples logged during training
         writer = get_tensorboard_writer(accelerator)
