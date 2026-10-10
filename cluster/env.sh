@@ -12,6 +12,9 @@ export PYTHONNOUSERSITE=1
 # Write Python output to the job log immediately (it is buffered by default when not printed to a terminal)
 export PYTHONUNBUFFERED=1
 
+# Let PyTorch grow memory segments instead of fragmenting the GPU memory (avoids some out-of-memory errors)
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
 # Runs a command inside the container (with GPU support), with the SegESR virtual environment active.
 in_container() {
     singularity exec --nv "$SEGESR_SIF" bash -c 'source "$0/bin/activate" && exec "$@"' "$SEGESR_VENV" "$@"

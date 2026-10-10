@@ -1,4 +1,5 @@
 import argparse
+import gc
 import logging
 import math
 import os
@@ -45,6 +46,7 @@ from segesr.utils import (
     decode_latents_to_rgb,
     get_diffusion_target,
     get_sam_kwargs,
+    prepare_validation_conditions,
     import_model_class_from_model_name_or_path,
     init_sam_weights,
     load_sam2,
@@ -603,6 +605,19 @@ def main(args):
             stability_score_thresh=0.9,
         )
 
+    # The validation image is fixed: its RAM tags/embeddings and SAM 2 conditions are computed once here, so
+    # the RAM model (and SAM 2, if only needed for this) does not occupy GPU memory during training
+    validation_conditions = None
+    if args.generate_validation_image:
+        validation_conditions = prepare_validation_conditions(
+            args.validation_image[0], ram_model, sam_generator if uses_sam2 else None, accelerator.device
+        )
+        del ram_model
+        if not args.use_sam_loss:
+            sam_generator = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
     # Modules missing from the loaded checkpoint (e.g. the SAM 2 attentions when starting from SeeSR) keep their initialization
     architecture = dict(
         use_image_cross_attention=True,
@@ -835,10 +850,9 @@ def main(args):
         weight_dtype = torch.bfloat16
 
     vae.to(accelerator.device, dtype=weight_dtype)
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
     if tiny_vae is not None:
         tiny_vae.to(accelerator.device, dtype=weight_dtype)
-    if ram_model is not None:
-        ram_model.to(accelerator.device)
 
     sam_loss_fn = None
     if args.use_sam_loss:
@@ -1028,8 +1042,7 @@ def main(args):
                             tokenizer,
                             noise_scheduler,
                             tiny_vae,
-                            ram_model,
-                            sam_generator,
+                            validation_conditions,
                             sam_loss_fn,
                             lpips_loss_fn,
                             validation_dataloader,

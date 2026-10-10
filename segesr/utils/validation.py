@@ -57,6 +57,36 @@ def get_sam_kwargs(batch, device, dtype, config, mask_size, use_clean=None):
 
     return sam2_model_kwargs(config, img_embeds, seg_logits, mask_size, dtype)
 
+@torch.no_grad()
+def prepare_validation_conditions(image_path, ram_model, sam_generator, device):
+    """
+    Computes once, before training, the conditions of the fixed validation image: RAM tags and DAPE
+    embeddings, and the SAM 2 conditions if `sam_generator` is given. They are kept on the CPU, so the
+    RAM model does not need to stay on the GPU during training.
+    """
+
+    val_image = Image.open(image_path).convert("RGB")
+    ram_transforms = transforms.Compose([
+        transforms.Resize((384, 384)),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+    ])
+    lq_for_ram = ram_transforms(transforms.ToTensor()(val_image).unsqueeze(0).to(device))
+
+    ram_model.to(device)
+    conditions = {
+        "image": val_image,
+        "tags": inference(lq_for_ram, ram_model)[0],
+        "ram_embeds": ram_model.generate_image_embeds(lq_for_ram).cpu(),
+    }
+    ram_model.to("cpu")
+
+    if sam_generator is not None:
+        sam_img_embeds, sam_seg_logits = compute_sam2_conditions(val_image, sam_generator, max_masks=MAX_MASKS)
+        conditions["sam2_encoder_hidden_states"] = sam_img_embeds
+        conditions["sam2_segmentation_encoder_hidden_states"] = seg_logits_to_hidden_states(sam_seg_logits)
+
+    return conditions
+
 def validation(
         unet,
         controlnet,
@@ -65,8 +95,7 @@ def validation(
         tokenizer,
         noise_scheduler,
         tiny_vae,
-        ram_model,
-        sam_generator,
+        validation_conditions,
         sam_loss_fn,
         lpips_loss_fn,
         validation_dataloader,
@@ -88,7 +117,7 @@ def validation(
     # -------------------------------------------------------------------------
     # 1. Visual Image Generation (Qualitative Check)
     # -------------------------------------------------------------------------
-    if args.generate_validation_image and accelerator.is_main_process and args.validation_image:
+    if args.generate_validation_image and accelerator.is_main_process and validation_conditions is not None:
         # Imported here: the pipeline itself imports `segesr.utils`
         from segesr.pipelines.pipeline_segesr import StableDiffusionControlNetPipeline
 
@@ -106,31 +135,19 @@ def validation(
         pipeline = pipeline.to(accelerator.device)
         pipeline.set_progress_bar_config(disable=True)
 
-        val_image_path = args.validation_image[0]
-        val_image = Image.open(val_image_path).convert("RGB")
-
-        tensor_transforms = transforms.ToTensor()
-        ram_transforms = transforms.Compose([
-            transforms.Resize((384, 384)),
-            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-        ])
-
-        with torch.no_grad():
-            lq_for_ram = tensor_transforms(val_image).unsqueeze(0).to(accelerator.device)
-            lq_for_ram = ram_transforms(lq_for_ram)
-            ram_tags = inference(lq_for_ram, ram_model)
-            ram_embeds = ram_model.generate_image_embeds(lq_for_ram)
+        # Conditions of the validation image, computed once before training (prepare_validation_conditions)
+        val_image = validation_conditions["image"]
+        ram_embeds = validation_conditions["ram_embeds"].to(accelerator.device)
 
         sam_kwargs = {}
         if model_uses_sam2(unet.config):
-            sam_img_embeds, sam_seg_logits = compute_sam2_conditions(val_image, sam_generator, max_masks=MAX_MASKS)
             sam_kwargs = {
-                "sam2_encoder_hidden_states": sam_img_embeds.to(accelerator.device),
-                "sam2_segmentation_encoder_hidden_states": seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device),
+                key: validation_conditions[key].to(accelerator.device)
+                for key in ("sam2_encoder_hidden_states", "sam2_segmentation_encoder_hidden_states")
             }
 
         user_prompt = args.validation_prompt[0] if args.validation_prompt else ""
-        final_prompt = ", ".join(p for p in [ram_tags[0], user_prompt, "clean, high-resolution, 8k"] if p)
+        final_prompt = ", ".join(p for p in [validation_conditions["tags"], user_prompt, "clean, high-resolution, 8k"] if p)
         negative_prompt = "dotted, noise, blur, lowres, smooth"
 
         width, height = val_image.size
