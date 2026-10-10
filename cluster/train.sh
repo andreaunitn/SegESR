@@ -2,7 +2,7 @@
 #SBATCH --job-name=segesr_train
 #SBATCH --partition=department_only
 #SBATCH --gpus=1
-#SBATCH --cpus-per-task=4
+#SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --output=slurm_logs/%x_%j.log
 #

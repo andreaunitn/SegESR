@@ -807,6 +807,9 @@ def main(args):
         batch_size=args.train_batch_size,
         shuffle=True,
         collate_fn=collate_fn,
+        pin_memory=True,
+        persistent_workers=args.dataloader_num_workers > 0,
+        prefetch_factor=4 if args.dataloader_num_workers > 0 else None,
     )
 
     # Validation runs on the main process only, so its dataloader is not sharded by `accelerator.prepare`
@@ -954,7 +957,9 @@ def main(args):
         torch.cuda.reset_peak_memory_stats()
 
     for epoch in range(first_epoch, args.num_train_epochs):
+        data_start = time.time()
         for step, batch in enumerate(train_dataloader):
+            step_values["time/data_wait_per_step"].append(time.time() - data_start)
             with accelerator.accumulate(controlnet, unet):
                 # Ground truth latents
                 pixel_values = batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)
@@ -1005,7 +1010,6 @@ def main(args):
 
                 del encoder_hidden_states, controlnet_image, ram_encoder_hidden_states, sam_kwargs
                 del down_block_res_samples, mid_block_res_sample
-                torch.cuda.empty_cache()
 
                 target = get_diffusion_target(noise_scheduler, latents, noise, timesteps)
                 diffusion_loss = F.mse_loss(model_pred.float(), target.float(), reduction="mean")
@@ -1050,6 +1054,8 @@ def main(args):
                 global_step += 1
 
                 logs = {key: float(np.mean(values)) for key, values in step_values.items()}
+                # Data waits add up over the micro-batches of the step
+                logs["time/data_wait_per_step"] = float(np.sum(step_values["time/data_wait_per_step"]))
                 step_values.clear()
                 logs["lr"] = lr_scheduler.get_last_lr()[0]
                 if grad_norm is not None:
@@ -1101,6 +1107,8 @@ def main(args):
 
             if global_step >= args.max_train_steps:
                 break
+
+            data_start = time.time()
 
         if global_step >= args.max_train_steps:
             break
