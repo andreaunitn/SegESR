@@ -47,6 +47,7 @@ from segesr.dataloaders.paired_dataset import PairedCaptionDataset, collate_fn
 from segesr.losses import LPIPSLoss, SamPerceptualLoss
 from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
+from segesr.utils.profiling import PhaseTimer
 from segesr.utils import (
     decode_latents_to_rgb,
     get_diffusion_target,
@@ -288,6 +289,12 @@ def parse_args(input_args=None):
         "--use_8bit_adam",
         action="store_true",
         help="Whether or not to use 8-bit Adam from bitsandbytes."
+    )
+    parser.add_argument(
+        "--profile_steps",
+        type=int,
+        default=0,
+        help="Time the phases of the first N training samples (GPU synchronized) and print/log the breakdown. 0 = off.",
     )
     parser.add_argument(
         "--use_paged_optimizer",
@@ -956,10 +963,17 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.reset_peak_memory_stats()
 
+    # Optional per-phase timing of the first `--profile_steps` samples
+    timer = PhaseTimer()
+
     for epoch in range(first_epoch, args.num_train_epochs):
         data_start = time.time()
         for step, batch in enumerate(train_dataloader):
             step_values["time/data_wait_per_step"].append(time.time() - data_start)
+            # The first optimization step is skipped: it includes one-off start-up costs
+            timer.enabled = step >= args.gradient_accumulation_steps and timer.iterations < args.profile_steps
+            timer.totals["data wait"] += (time.time() - data_start) if timer.enabled else 0.0
+            timer.start()
             with accelerator.accumulate(controlnet, unet):
                 # Ground truth latents
                 pixel_values = batch["pixel_values"].to(accelerator.device, dtype=weight_dtype)
@@ -978,6 +992,7 @@ def main(args):
                     encoder_hidden_states = text_encoder(batch["input_ids"].to(accelerator.device))[0]
                 controlnet_image = batch["conditioning_pixel_values"].to(accelerator.device, dtype=weight_dtype)
                 ram_encoder_hidden_states = batch["ram_values"].to(accelerator.device, dtype=weight_dtype)
+                timer.mark("VAE encode + text encoder + inputs")
 
                 # At low noise levels, sometimes condition on the SAM 2 outputs of the clean image
                 use_clean_sam = None
@@ -987,6 +1002,7 @@ def main(args):
 
                 sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, model_config, mask_size=latents.shape[-2:],
                                             use_clean=use_clean_sam)
+                timer.mark("SAM 2 inputs (segment tokens/masks)")
 
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
@@ -997,6 +1013,7 @@ def main(args):
                     image_encoder_hidden_states=ram_encoder_hidden_states,
                     **sam_kwargs,
                 )
+                timer.mark("ControlNet forward")
 
                 model_pred = unet(
                     noisy_latents,
@@ -1008,6 +1025,7 @@ def main(args):
                     **sam_kwargs,
                 ).sample
 
+                timer.mark("UNet forward")
                 del encoder_hidden_states, controlnet_image, ram_encoder_hidden_states, sam_kwargs
                 del down_block_res_samples, mid_block_res_sample
 
@@ -1033,7 +1051,9 @@ def main(args):
                         loss = loss + args.lpips_loss_weight * lpips_loss
                         logs["loss/train_lpips"] = lpips_loss.detach().item() * args.lpips_loss_weight
 
+                timer.mark("losses (diffusion + tiny VAE decode + SAM 2 loss)")
                 accelerator.backward(loss)
+                timer.mark("backward")
 
                 if accelerator.sync_gradients:
                     # Norm of the unscaled gradients (with fp16, the raw ones are multiplied by the loss scale)
@@ -1043,10 +1063,20 @@ def main(args):
                 optimizer.step()
                 lr_scheduler.step()
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
+                timer.mark("clip + optimizer step")
 
             logs["loss/train"] = loss.detach().item()
             for key, value in logs.items():
                 step_values[key].append(value)
+
+            timer.end_iteration()
+            if timer.enabled and timer.iterations == args.profile_steps:
+                breakdown = timer.summary()
+                total = sum(breakdown.values())
+                logger.info(f"Time per sample over the first {args.profile_steps} samples (total {total:.2f} s):")
+                for phase, seconds in breakdown.items():
+                    logger.info(f"  {phase:52s} {seconds:7.3f} s  ({100 * seconds / total:5.1f}%)")
+                accelerator.log({f"profile/{phase}": seconds for phase, seconds in breakdown.items()}, step=global_step)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
