@@ -1073,9 +1073,9 @@ def main(args):
             if timer.enabled and timer.iterations == args.profile_steps:
                 breakdown = timer.summary()
                 total = sum(breakdown.values())
-                logger.info(f"Time per sample over the first {args.profile_steps} samples (total {total:.2f} s):")
+                accelerator.print(f"Time per sample over the first {args.profile_steps} samples (total {total:.2f} s):")
                 for phase, seconds in breakdown.items():
-                    logger.info(f"  {phase:52s} {seconds:7.3f} s  ({100 * seconds / total:5.1f}%)")
+                    accelerator.print(f"  {phase:52s} {seconds:7.3f} s  ({100 * seconds / total:5.1f}%)")
                 accelerator.log({f"profile/{phase}": seconds for phase, seconds in breakdown.items()}, step=global_step)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
