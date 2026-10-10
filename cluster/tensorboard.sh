@@ -36,4 +36,5 @@ echo "TensorBoard on ${HOST}:${PORT}. On your Mac, run:"
 echo "    ${TUNNEL}"
 echo "then open http://localhost:${PORT} in the browser (Ctrl+C in that terminal closes the tunnel)."
 
-in_container tensorboard --logdir tensorboard --port "$PORT" "${BIND[@]}"
+# --load_fast=false: the classic event reader (the fast one can fail silently on network filesystems such as /home)
+in_container tensorboard --logdir tensorboard --port "$PORT" "${BIND[@]}" --load_fast=false --reload_interval 30
