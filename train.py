@@ -45,6 +45,7 @@ from segesr.models.unet_2d_condition import UNet2DConditionModel
 from segesr.utils import (
     decode_latents_to_rgb,
     get_diffusion_target,
+    cast_frozen_params,
     get_sam_kwargs,
     prepare_validation_conditions,
     import_model_class_from_model_name_or_path,
@@ -280,6 +281,11 @@ def parse_args(input_args=None):
         "--use_8bit_adam",
         action="store_true",
         help="Whether or not to use 8-bit Adam from bitsandbytes."
+    )
+    parser.add_argument(
+        "--use_paged_optimizer",
+        action="store_true",
+        help="With --use_8bit_adam, use the paged 8-bit AdamW, whose states move to CPU memory when the GPU is full.",
     )
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
     parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
@@ -712,16 +718,11 @@ def main(args):
         unet.enable_gradient_checkpointing()
         controlnet.enable_gradient_checkpointing()
 
-    # Check that all trainable models are in full precision
-    low_precision_error_string = (
-        " Please make sure to always have all model weights in full float32 precision when starting training - even if"
-        " doing mixed precision training, copy of the weights should still be float32."
-    )
-
-    if accelerator.unwrap_model(controlnet).dtype != torch.float32:
-        raise ValueError(f"Controlnet loaded as datatype {accelerator.unwrap_model(controlnet).dtype}. {low_precision_error_string}")
-    if accelerator.unwrap_model(unet).dtype != torch.float32:
-        raise ValueError(f"Unet loaded as datatype {accelerator.unwrap_model(unet).dtype}. {low_precision_error_string}")
+    # Trainable weights stay float32 (mixed precision keeps float32 master weights); the frozen ones are stored in
+    # the mixed-precision dtype, in which autocast uses them anyway
+    frozen_dtype = {"fp16": torch.float16, "bf16": torch.bfloat16}.get(accelerator.mixed_precision, torch.float32)
+    num_cast = cast_frozen_params([unet, controlnet], frozen_dtype)
+    logger.info(f"Frozen UNet/ControlNet parameters stored in {frozen_dtype}: {num_cast:,}")
 
     if args.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -737,7 +738,8 @@ def main(args):
         except ImportError:
             raise ImportError("To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`.")
 
-        optimizer_class = bnb.optim.AdamW8bit
+        # The paged variant moves the optimizer states to CPU memory when the GPU is full
+        optimizer_class = bnb.optim.PagedAdamW8bit if args.use_paged_optimizer else bnb.optim.AdamW8bit
     else:
         optimizer_class = torch.optim.AdamW
     # endregion

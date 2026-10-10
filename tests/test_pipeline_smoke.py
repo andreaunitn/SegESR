@@ -174,3 +174,42 @@ def test_pipeline_denoising_loop(monkeypatch, architecture, size, tile_size, ref
         if architecture["segment_routing"]:
             expected["sam2_segmentation_masks"] = torch.Size([2, 8, latent_tile, latent_tile])
     assert unet_inputs == [expected] * len(unet_inputs)
+
+def test_training_step_with_low_precision_frozen_weights():
+    """As in train.py: frozen weights in the mixed-precision dtype, trainable ones float32, forward under autocast."""
+
+    from segesr.utils.weight_utils import cast_frozen_params
+
+    unet, controlnet = make_models(**FULL)
+    unet.enable_gradient_checkpointing()
+    controlnet.enable_gradient_checkpointing()
+    unet.train()
+    controlnet.train()
+
+    for model in (unet, controlnet):
+        model.requires_grad_(False)
+        for name, param in model.named_parameters():
+            if any(key in name for key in ("image_attentions", "sam2_", "fusion_conv")):
+                param.requires_grad_(True)
+
+    num_cast = cast_frozen_params([unet, controlnet], torch.bfloat16)
+    assert num_cast > 0
+    trainable = [p for m in (unet, controlnet) for p in m.parameters() if p.requires_grad]
+    assert all(p.dtype == torch.float32 for p in trainable)
+    assert all(p.dtype == torch.bfloat16 for m in (unet, controlnet) for p in m.parameters() if not p.requires_grad)
+
+    batch = collate_fn([{"sam_img_embeds": torch.randn(SAM_DIM, 64, 64), "sam_seg_embeds": torch.randn(4, 256, 256) * 5}])
+    latents = torch.randn(1, 4, 16, 16)
+    sam_kwargs = get_sam_kwargs(batch, "cpu", torch.bfloat16, unet.config, mask_size=latents.shape[-2:])
+
+    with torch.autocast("cpu", dtype=torch.bfloat16):
+        down, mid = controlnet(latents, torch.tensor([500]), encoder_hidden_states=torch.randn(1, 7, TEXT_DIM),
+                               controlnet_cond=torch.rand(1, 3, 128, 128), return_dict=False,
+                               image_encoder_hidden_states=torch.randn(1, 4, DAPE_DIM), **sam_kwargs)
+        model_pred = unet(latents, torch.tensor([500]), encoder_hidden_states=torch.randn(1, 7, TEXT_DIM),
+                          down_block_additional_residuals=down, mid_block_additional_residual=mid,
+                          image_encoder_hidden_states=torch.randn(1, 4, DAPE_DIM), **sam_kwargs).sample
+    model_pred.float().square().mean().backward()
+
+    assert torch.isfinite(model_pred.float()).all()
+    assert all(p.grad is not None and p.grad.dtype == torch.float32 for p in trainable)

@@ -90,6 +90,27 @@ def init_sam_weights(model, accelerator, attention_modules):
 
     logger.info(f"Finished copying weights for {model.__class__.__name__}.")
 
+def cast_frozen_params(models, dtype):
+    """
+    Stores the frozen parameters of `models` in `dtype` (the mixed-precision dtype) and checks that the trainable
+    ones are float32. Under autocast the frozen weights are used in that dtype anyway, so this only saves memory.
+
+    Returns:
+        int: number of frozen parameters cast.
+    """
+
+    num_cast = 0
+    for model in models:
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                if param.dtype != torch.float32:
+                    raise ValueError(f"Trainable parameter '{name}' is {param.dtype}; trainable weights must be float32.")
+            elif param.dtype != dtype:
+                param.data = param.data.to(dtype)
+                num_cast += param.numel()
+    return num_cast
+
+
 def verify_weights(model, accelerator, attention_modules):
     """
     Verifies that target SAM 2 attention modules have been correctly

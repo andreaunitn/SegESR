@@ -41,6 +41,7 @@ resume_from_checkpoint: latest
 mixed_precision: fp16          # the cluster GPUs (Turing) have no native bf16; bf16 is fine on Ampere or newer
 gradient_checkpointing: true
 use_8bit_adam: true
+use_paged_optimizer: true    # optimizer states move to CPU memory when the GPU is full
 allow_tf32: true
 enable_xformers_memory_efficient_attention: false   # PyTorch's attention is used instead (xformers gains nothing on Turing)
 
