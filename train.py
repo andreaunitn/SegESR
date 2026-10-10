@@ -1032,12 +1032,9 @@ def main(args):
                 accelerator.backward(loss)
 
                 if accelerator.sync_gradients:
-                    grads = [torch.norm(p.grad.detach(), 2) for p in params_to_optimize if p.grad is not None]
-                    if grads:
-                        total_norm = torch.norm(torch.stack(grads), 2)
-                        grad_norm = total_norm.item()
-
-                    accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
+                    # Norm of the unscaled gradients (with fp16, the raw ones are multiplied by the loss scale)
+                    total_norm = accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
+                    grad_norm = float(total_norm) if total_norm is not None else None
 
                 optimizer.step()
                 lr_scheduler.step()
@@ -1057,6 +1054,9 @@ def main(args):
                 logs["lr"] = lr_scheduler.get_last_lr()[0]
                 if grad_norm is not None:
                     logs["grad_norm"] = grad_norm
+                # fp16 loss scale: it halves (and the step is skipped) whenever the gradients overflow
+                if accelerator.scaler is not None:
+                    logs["loss_scale"] = accelerator.scaler.get_scale()
                 logs["time/seconds_per_step"] = time.time() - step_start
                 if torch.cuda.is_available():
                     logs["gpu/max_memory_allocated_gb"] = torch.cuda.max_memory_allocated() / 2**30
