@@ -1,0 +1,152 @@
+SegESR — commands, in order
+===========================
+
+[MAC]     = run in a terminal on your Mac, in the project folder
+[CLUSTER] = run on the cluster (after `ssh segesr`), in ~/SegESR
+Always submit jobs from ~/SegESR, and always the files in cluster/ (never scripts/ directly).
+Replace <jobid> with the number printed by sbatch ("Submitted batch job 12345").
+
+
+0. UPDATE THE CODE ON THE CLUSTER (after every change)
+------------------------------------------------------
+[MAC]
+    git add -A && git commit -m "describe the change" && git push
+
+[CLUSTER]
+    ssh segesr
+    cd ~/SegESR && git pull
+
+
+1. MONITORING (any job)
+-----------------------
+[CLUSTER]
+    squeue -u $USER                                        # your jobs: PD = waiting, R = running
+    tail -F slurm_logs/<job name>_<jobid>.log | tr '\r' '\n'   # live log (Ctrl+C stops watching, not the job)
+    sacct -j <jobid> --format=JobID,State,ExitCode,Elapsed # after the end: COMPLETED + 0:0 = OK
+    scancel <jobid>                                        # stop a job
+    srun --jobid=<jobid> --overlap nvidia-smi              # GPU use of a running job
+
+    # Time limit of the partition (use it with --time=... when submitting long jobs)
+    scontrol show partition department_only | grep -oE "(DefaultTime|MaxTime)=[^ ]+"
+
+
+2. MEMORY TEST OF THE FULL MODEL (current step)
+-----------------------------------------------
+[CLUSTER]
+    rm -rf preset/train_output/smoke tensorboard/smoke
+    MAX_RESTARTS=0 sbatch cluster/train.sh configs/train_segesr.yaml \
+        --output_dir=preset/train_output/smoke --max_train_steps=50 \
+        --checkpointing_steps=50 --validation_steps=50
+    tail -F slurm_logs/segesr_train_<jobid>.log | tr '\r' '\n'
+
+    Check in the log:
+      - "Frozen UNet/ControlNet parameters stored in torch.float16: ..."
+      - the progress bar goes past step 1 and reaches 50 (note the s/it speed)
+      - no "CUDA out of memory"
+      - preset/train_output/smoke/checkpoint-50/ and .../validation_samples/step_50.png exist
+
+    If it runs out of memory, send the last lines:
+      grep -n "Steps:\|Running validation\|out of memory" slurm_logs/segesr_train_<jobid>.log | tail -5
+      tail -40 slurm_logs/segesr_train_<jobid>.log
+
+    Afterwards:
+      rm -rf preset/train_output/smoke tensorboard/smoke
+
+
+3. MAIN TRAINING RUNS
+---------------------
+[CLUSTER]
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_segesr.yaml    # full SegESR       -> preset/train_output/segesr
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml     # SeeSR fine-tuned  -> preset/train_output/seesr_finetuned
+
+    If a run stops (time limit, crash): submit the SAME command again; it resumes from the latest checkpoint.
+    Every run must have its own --output_dir (a run refuses to resume a checkpoint of another architecture).
+
+
+4. ABLATION RUNS (one component at a time, from the SeeSR baseline)
+-------------------------------------------------------------------
+[CLUSTER]
+    # Step 1: PAFB
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
+        --output_dir=preset/train_output/pafb
+
+    # Step 2: + SICA
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
+        --use_sam2_image_attention \
+        --output_dir=preset/train_output/pafb_sica
+
+    # Step 3: + SMCA
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
+        --use_sam2_image_attention --use_sam2_segmentation_attention \
+        --output_dir=preset/train_output/pafb_sica_smca
+
+    # Step 4: + segment routing
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
+        --use_sam2_image_attention --use_sam2_segmentation_attention --segment_routing \
+        --output_dir=preset/train_output/pafb_sica_smca_routing
+
+    # Step 5: + SAM 2 perceptual loss
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
+        --use_sam2_image_attention --use_sam2_segmentation_attention --segment_routing --use_sam_loss \
+        --output_dir=preset/train_output/pafb_sica_smca_routing_samloss
+
+    # Step 6 (+ GT-derived SAM 2 conditions) = full SegESR = section 3
+
+
+5. TESTING (inference + metrics + TensorBoard)
+----------------------------------------------
+[CLUSTER]
+    # Zero-shot SeeSR (already done; re-run only the metrics to add them to TensorBoard)
+    SKIP_GENERATION=true DATASETS="RealSR DRealSR RealLR200 DIV2K" sbatch -J seesr_tb cluster/test.sh preset/models/seesr
+
+    # Every checkpoint of a run, one job per dataset (DIV2K is by far the longest)
+    for d in RealSR DRealSR RealLR200 DIV2K; do
+        DATASETS=$d sbatch -J segesr_$d cluster/test.sh preset/train_output/segesr
+    done
+    # same with preset/train_output/seesr_finetuned, preset/train_output/pafb, ...
+
+    # Test-time ablation: full SegESR WITHOUT the SAM 2 refresh (saved with the suffix _norefresh)
+    for d in RealSR DRealSR RealLR200 DIV2K; do
+        TAG=norefresh TEST_ARGS="--sam_refresh_timesteps" DATASETS=$d sbatch -J segesr_norefresh_$d cluster/test.sh preset/train_output/segesr
+    done
+
+    # Only recompute the metrics of images already generated
+    SKIP_GENERATION=true DATASETS=RealSR sbatch -J metrics cluster/test.sh preset/train_output/segesr
+
+    Interrupted test jobs: submit the same command again; images already generated are skipped.
+    Outputs:  preset/datasets/output/<run>_<checkpoint>/<dataset>/sample00/
+    Metrics:  metrics/<dataset>/results_<run>_<checkpoint>.json
+
+
+6. TENSORBOARD
+--------------
+[CLUSTER]
+    sbatch cluster/tensorboard.sh            # another port if 6006 is busy: sbatch cluster/tensorboard.sh 6011
+    cat slurm_logs/segesr_tensorboard_<jobid>.log
+
+[MAC]
+    ssh -N -L 6006:<node>:6006 segesr        # exact command printed in the log above; leave it running
+    open http://localhost:6006
+
+    Alternative without a tunnel:
+[MAC]
+    rsync -avz segesr:~/SegESR/tensorboard ./segesr_tensorboard
+    python3 -m venv ~/tb && ~/tb/bin/pip install tensorboard     # once
+    ~/tb/bin/tensorboard --logdir ./segesr_tensorboard            # then open http://localhost:6006
+
+
+7. RESULTS
+----------
+[CLUSTER] all metrics as one table:
+    python3 - <<'EOF'
+import glob, json, os
+for path in sorted(glob.glob("metrics/*/results_*.json")):
+    dataset, results = next(iter(json.load(open(path)).items()))
+    name = os.path.basename(path)[len("results_"):-len(".json")]
+    print(f"{dataset:10s} {name:40s} " + "  ".join(f"{k}={v:.4f}" for k, v in dict(results).items()))
+EOF
+
+[MAC] download images / folders to inspect:
+    scp segesr:~/SegESR/preset/datasets/output/segesr_checkpoint-30000/RealSR/sample00/Canon_004_LR4.png ~/Downloads/
+    rsync -avzP segesr:~/SegESR/preset/datasets/output/segesr_checkpoint-30000/RealSR/sample00/ ~/Downloads/segesr_RealSR/
+    rsync -avz segesr:~/SegESR/metrics ./metrics

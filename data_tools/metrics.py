@@ -77,6 +77,9 @@ def parse_args():
     parser.add_argument("--name", type=str, required=True, help="Run / checkpoint name, used for the output file name.")
     parser.add_argument("--sample", type=str, default="sample00", help="Sample subfolder of `--sr_dir` to evaluate.")
     parser.add_argument("--output_dir", type=str, default="metrics", help="Results are written to <output_dir>/<dataset>/results_<name>.json")
+    parser.add_argument("--tb_dir", type=str, default=None, help="Also log the metrics (and a few images) to TensorBoard in this folder.")
+    parser.add_argument("--tb_step", type=int, default=0, help="TensorBoard step of the results, e.g. the training step of the checkpoint.")
+    parser.add_argument("--tb_images", type=int, default=4, help="Number of SR (| GT) images logged to TensorBoard.")
     return parser.parse_args()
 
 @torch.no_grad()
@@ -136,6 +139,29 @@ def main():
     print(f"Saved metrics to {save_path}")
     for metric, value in results:
         print(f"  {metric}: {value:.4f}")
+
+    if args.tb_dir is not None:
+        log_to_tensorboard(args, results, sr_dir, image_files)
+
+def log_to_tensorboard(args, results, sr_dir, image_files):
+    """Metrics as scalars 'test/<dataset>/<metric>' and the first images as 'test/<dataset>/<image>' (SR | GT)."""
+
+    from torch.utils.tensorboard import SummaryWriter
+    from segesr.utils.tensorboard_utils import side_by_side, to_tensorboard_image
+
+    writer = SummaryWriter(args.tb_dir)
+    for metric, value in results:
+        writer.add_scalar(f"test/{args.dataset}/{metric}", value, args.tb_step)
+
+    for image in image_files[:args.tb_images]:
+        panels = [Image.open(os.path.join(sr_dir, image))]
+        if args.gt_dir is not None:
+            panels.append(Image.open(os.path.join(args.gt_dir, image)))
+        writer.add_image(f"test/{args.dataset}/{Path(image).stem}", to_tensorboard_image(side_by_side(panels), max_size=1024),
+                         args.tb_step, dataformats="HWC")
+
+    writer.close()
+    print(f"Logged to TensorBoard: {args.tb_dir} (step {args.tb_step})")
 
 if __name__ == "__main__":
     main()

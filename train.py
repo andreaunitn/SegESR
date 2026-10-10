@@ -5,7 +5,11 @@ import math
 import os
 import shutil
 import sys
+import time
+from collections import defaultdict
 from pathlib import Path
+
+from PIL import Image
 
 # Make `segesr` and the vendored `ram` / `basicsr` packages importable without installation
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -17,6 +21,7 @@ from packaging import version
 from tqdm.auto import tqdm
 from huggingface_hub import create_repo, upload_folder
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -47,6 +52,8 @@ from segesr.utils import (
     get_diffusion_target,
     cast_frozen_params,
     get_sam_kwargs,
+    get_tensorboard_writer,
+    to_tensorboard_image,
     prepare_validation_conditions,
     import_model_class_from_model_name_or_path,
     init_sam_weights,
@@ -134,8 +141,8 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--logging_dir",
         type=str,
-        default="logs",
-        help="TensorBoard log directory, relative to `output_dir`.",
+        default=None,
+        help="TensorBoard log directory (default: 'tensorboard/<output_dir name>/train', next to the test logs of the run).",
     )
     parser.add_argument(
         "--report_to",
@@ -521,7 +528,7 @@ def prune_checkpoints(output_dir, keep):
         shutil.rmtree(os.path.join(output_dir, checkpoint))
 
 def main(args):
-    logging_dir = Path(args.output_dir, args.logging_dir)
+    logging_dir = Path(args.logging_dir) if args.logging_dir else Path("tensorboard", Path(args.output_dir).name, "train")
 
     # region Accelerator
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
@@ -878,6 +885,13 @@ def main(args):
         # Trackers (e.g. tensorboard) only accept scalar config values
         tracker_config = {k: v for k, v in vars(args).items() if isinstance(v, (int, float, str, bool))}
         accelerator.init_trackers(args.tracker_project_name, config=tracker_config)
+
+        # The validation input (bicubic x4), to compare with the validation samples logged during training
+        writer = get_tensorboard_writer(accelerator)
+        if writer is not None and validation_conditions is not None:
+            val_input = validation_conditions["image"]
+            val_input = val_input.resize((val_input.width * 4, val_input.height * 4), Image.BICUBIC)
+            writer.add_image("validation/input_bicubic", to_tensorboard_image(val_input), 0, dataformats="HWC")
     # endregion
 
     # region Train
@@ -927,6 +941,13 @@ def main(args):
 
     # Architecture of the trained models: decides which SAM 2 inputs they receive
     model_config = accelerator.unwrap_model(unet).config
+
+    # Values of the micro-batches of the current optimization step, logged once per step as their mean
+    step_values = defaultdict(list)
+    grad_norm = None
+    step_start = time.time()
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
 
     for epoch in range(first_epoch, args.num_train_epochs):
         for step, batch in enumerate(train_dataloader):
@@ -1010,7 +1031,7 @@ def main(args):
                     grads = [torch.norm(p.grad.detach(), 2) for p in params_to_optimize if p.grad is not None]
                     if grads:
                         total_norm = torch.norm(torch.stack(grads), 2)
-                        accelerator.log({"grad_norm": total_norm.item()}, step=global_step)
+                        grad_norm = total_norm.item()
 
                     accelerator.clip_grad_norm_(params_to_optimize, args.max_grad_norm)
 
@@ -1019,12 +1040,22 @@ def main(args):
                 optimizer.zero_grad(set_to_none=args.set_grads_to_none)
 
             logs["loss/train"] = loss.detach().item()
-            logs["lr"] = lr_scheduler.get_last_lr()[0]
+            for key, value in logs.items():
+                step_values[key].append(value)
 
             # Checks if the accelerator has performed an optimization step behind the scenes
             if accelerator.sync_gradients:
                 progress_bar.update(1)
                 global_step += 1
+
+                logs = {key: float(np.mean(values)) for key, values in step_values.items()}
+                step_values.clear()
+                logs["lr"] = lr_scheduler.get_last_lr()[0]
+                if grad_norm is not None:
+                    logs["grad_norm"] = grad_norm
+                logs["time/seconds_per_step"] = time.time() - step_start
+                if torch.cuda.is_available():
+                    logs["gpu/max_memory_allocated_gb"] = torch.cuda.max_memory_allocated() / 2**30
 
                 if accelerator.is_main_process:
                     if global_step % args.checkpointing_steps == 0:
@@ -1060,8 +1091,9 @@ def main(args):
                         if "val_loss" in val_logs:
                             logger.info(f"validation_loss: {val_logs['val_loss']:.4f}")
 
-            progress_bar.set_postfix(**logs)
-            accelerator.log(logs, step=global_step)
+                progress_bar.set_postfix(**{k: f"{v:.4g}" for k, v in logs.items() if k.startswith("loss/train")})
+                accelerator.log(logs, step=global_step)
+                step_start = time.time()
 
             if global_step >= args.max_train_steps:
                 break

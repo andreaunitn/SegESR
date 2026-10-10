@@ -165,6 +165,8 @@ sbatch cluster/test.sh preset/train_output/segesr_v2
 
 Edit the `#SBATCH` lines (partition, QOS, memory) for another cluster.
 
+**TensorBoard.** Every run logs to `tensorboard/<run>/train` (losses, learning rate, gradient norm, seconds per step, peak GPU memory, validation samples), and `run_test.sh` adds `tensorboard/<run>/test` (all metrics and a few SR | GT images, at the training step of each checkpoint). `sbatch cluster/tensorboard.sh` starts TensorBoard on the cluster; its log prints the SSH tunnel command to run on your computer.
+
 `data_tools/download_data.py` (run by `cluster/download_models.sh` and `cluster/download_datasets.sh`, or directly) downloads everything into `preset/` except RealLR200, which is only on [Google Drive](https://drive.google.com/drive/folders/1L2VsQYQRKhWJxe6yWZU9FgBWSgBCk6mz). LSDIR is gated: accept its terms at [huggingface.co/ofsoundof/LSDIR](https://huggingface.co/ofsoundof/LSDIR) and save a read token in `~/.cache/huggingface/token` first. The full LSDIR (~155 GB) is kept in `preset/datasets/LSDIR_full` unless `--delete_full_lsdir` is passed.
 
 ## 📜 Credits & Acknowledgments

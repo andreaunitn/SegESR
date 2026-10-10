@@ -9,6 +9,7 @@ from accelerate.logging import get_logger
 
 from ram import inference_ram as inference
 from segesr.utils.diffusion_utils import decode_latents_to_rgb, get_diffusion_target, predict_original_latents
+from segesr.utils.tensorboard_utils import get_tensorboard_writer, to_tensorboard_image
 from segesr.utils.sam_utils import MAX_MASKS, compute_sam2_conditions, model_uses_sam2, sam2_model_kwargs, seg_logits_to_hidden_states
 
 logger = get_logger(__name__)
@@ -175,6 +176,10 @@ def validation(
         save_path = os.path.join(val_dir, f"step_{global_step}.png")
         generated_image.save(save_path)
         logger.info(f"Saved validation image to {save_path}")
+
+        writer = get_tensorboard_writer(accelerator)
+        if writer is not None:
+            writer.add_image("validation/sample", to_tensorboard_image(generated_image), global_step, dataformats="HWC")
 
         del pipeline
         torch.cuda.empty_cache()
