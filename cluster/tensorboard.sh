@@ -20,9 +20,12 @@ source cluster/env.sh
 
 PORT="${1:-6006}"
 HOST="$(hostname)"
+# The submit node may not resolve compute node names, so the tunnel uses the node's IP address
+HOST_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+HOST_IP="${HOST_IP:-$HOST}"
 
 if [ -n "${SLURM_JOB_ID:-}" ]; then
-    TUNNEL="ssh -N -L ${PORT}:${HOST}:${PORT} segesr"
+    TUNNEL="ssh -N -L ${PORT}:${HOST_IP}:${PORT} segesr"
     BIND=(--bind_all)            # reachable from the submit node, through which the tunnel goes
 else
     TUNNEL="ssh -N -L ${PORT}:localhost:${PORT} segesr"

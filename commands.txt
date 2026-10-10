@@ -125,7 +125,7 @@ Replace <jobid> with the number printed by sbatch ("Submitted batch job 12345").
     cat slurm_logs/segesr_tensorboard_<jobid>.log
 
 [MAC]
-    ssh -N -L 6006:<node>:6006 segesr        # exact command printed in the log above; leave it running
+    ssh -N -L 6006:<node IP>:6006 segesr     # exact command printed in the log above (no < >); leave it running
     open http://localhost:6006
 
     Alternative without a tunnel:
