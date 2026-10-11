@@ -38,9 +38,10 @@ if [ "${SLURM_NNODES:-1}" -gt 1 ]; then
     export MAX_RESTARTS=0
     echo "Multi-node run on $SLURM_NNODES nodes ($SLURM_JOB_NODELIST); main process at $MASTER_ADDR:$MASTER_PORT"
 
-    # One task per node, with all the GPUs and CPUs of its node; each starts one training process per GPU
+    # One task per node; each starts one training process per GPU of its node. No GPU option here: a step gets
+    # all the job's GPUs on its node by default (and this cluster rejects a per-node GPU request inside a --gpus job)
     srun --nodes="$SLURM_NNODES" --ntasks-per-node=1 --kill-on-bad-exit=1 \
-        --gpus-per-node="${SLURM_GPUS_ON_NODE:-2}" --cpus-per-task="${SLURM_CPUS_PER_TASK:-8}" \
+        --cpus-per-task="${SLURM_CPUS_PER_TASK:-8}" \
         bash -c 'source cluster/env.sh && MACHINE_RANK="$SLURM_NODEID" in_container bash scripts/run_train.sh "$@"' _ "$@"
 else
     in_container bash scripts/run_train.sh "$@"
