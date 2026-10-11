@@ -167,3 +167,9 @@ EOF
     Check in the log: "Multi-GPU run on 2 GPUs (8 samples per update)" and
                       "Training on 2 GPU(s): 2 per GPU x 2 accumulation steps = 8 samples per update"
     Compare time/seconds_per_step in TensorBoard with the single-GPU run (4.51 s for 4 samples per update).
+
+    # 4 GPUs = 2 nodes x 2 GPUs (one run across two nodes; no automatic restart after a crash)
+    NCCL_DEBUG=INFO sbatch --nodes=2 --ntasks-per-node=1 --gpus=4 --cpus-per-task=16 --mem=64G --time=<MaxTime> \
+        cluster/train.sh configs/train_segesr.yaml --output_dir=preset/train_output/segesr_4gpu
+    # In the log: "Multi-node run on 2 nodes ...", "Node 0 of 2 ...", "Node 1 of 2 ...", and
+    #   grep -m3 "NET/" slurm_logs/segesr_train_<jobid>.log   -> "NET/IB" = InfiniBand (fast), "NET/Socket" = TCP (slow)

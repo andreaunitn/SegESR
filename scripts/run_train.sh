@@ -32,7 +32,16 @@ else
     [ "$NUM_GPUS" -ge 1 ] 2>/dev/null || NUM_GPUS=1
 fi
 
-if [ "$NUM_GPUS" -gt 1 ]; then
+NUM_MACHINES="${NUM_MACHINES:-1}"
+
+if [ "$NUM_MACHINES" -gt 1 ]; then
+    # Multi-node (set up by cluster/train.sh): this node runs one process per GPU, all nodes form one run
+    LAUNCH=(accelerate launch --multi_gpu --num_machines "$NUM_MACHINES" --machine_rank "$MACHINE_RANK"
+            --main_process_ip "$MASTER_ADDR" --main_process_port "$MASTER_PORT"
+            --num_processes $(( NUM_GPUS * NUM_MACHINES )) --dynamo_backend no
+            train.py --config "$CONFIG" --total_batch_size="${MULTI_GPU_TOTAL_BATCH_SIZE:-8}")
+    echo "Node $MACHINE_RANK of $NUM_MACHINES: $NUM_GPUS GPUs ($(( NUM_GPUS * NUM_MACHINES )) in total, ${MULTI_GPU_TOTAL_BATCH_SIZE:-8} samples per update)"
+elif [ "$NUM_GPUS" -gt 1 ]; then
     # --total_batch_size comes before the user's flags, so a --total_batch_size given on the command line wins
     LAUNCH=(accelerate launch --multi_gpu --num_processes "$NUM_GPUS" --num_machines 1 --dynamo_backend no
             train.py --config "$CONFIG" --total_batch_size="${MULTI_GPU_TOTAL_BATCH_SIZE:-8}")
