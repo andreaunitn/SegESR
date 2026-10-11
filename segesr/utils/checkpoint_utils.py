@@ -33,21 +33,25 @@ def register_checkpoint_hooks(accelerator):
     """
     Registers custom Accelerate save and load state hooks so that UNet and ControlNet
     are cleanly serialized into diffusers-compatible subdirectories ('unet/' and 'controlnet/').
+    With several GPUs the models arrive wrapped for distributed training, so they are unwrapped,
+    and only the main process writes the weights.
     """
 
     def save_model_hook(models, weights, output_dir):
         assert len(models) == 2 and len(weights) == 2, f"Expected 2 models and weights, got {len(models)} and {len(weights)}"
 
         for model in models:
-            sub_dir = "unet" if isinstance(model, UNet2DConditionModel) else "controlnet"
-            model.save_pretrained(os.path.join(output_dir, sub_dir))
+            model = accelerator.unwrap_model(model)
+            if accelerator.is_main_process:
+                sub_dir = "unet" if isinstance(model, UNet2DConditionModel) else "controlnet"
+                model.save_pretrained(os.path.join(output_dir, sub_dir))
             weights.pop()
 
     def load_model_hook(models, input_dir):
         assert len(models) == 2, f"Expected 2 models to load, got {len(models)}"
 
         for _ in range(len(models)):
-            model = models.pop()
+            model = accelerator.unwrap_model(models.pop())
 
             if not isinstance(model, UNet2DConditionModel):
                 load_model = ControlNetModel.from_pretrained(input_dir, subfolder="controlnet")

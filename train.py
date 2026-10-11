@@ -291,6 +291,15 @@ def parse_args(input_args=None):
         help="Whether or not to use 8-bit Adam from bitsandbytes."
     )
     parser.add_argument(
+        "--total_batch_size",
+        type=int,
+        default=None,
+        help=(
+            "Samples per optimization step over all GPUs. If set, gradient_accumulation_steps is derived from it:"
+            " total_batch_size / (train_batch_size x number of GPUs). Set by scripts/run_train.sh for multi-GPU runs."
+        ),
+    )
+    parser.add_argument(
         "--profile_steps",
         type=int,
         default=0,
@@ -509,6 +518,16 @@ def parse_args(input_args=None):
         raise ValueError("`--segment_routing` requires `--use_sam2_segmentation_attention`.")
     if args.clean_sam_prob > 0 and not uses_sam2:
         raise ValueError("`--clean_sam_prob` requires a SAM 2 attention (`--use_sam2_image_attention` or `--use_sam2_segmentation_attention`).")
+
+    if args.total_batch_size is not None:
+        # WORLD_SIZE is set by `accelerate launch` (1 for a single-GPU run)
+        num_processes = int(os.environ.get("WORLD_SIZE", "1"))
+        per_pass = args.train_batch_size * num_processes
+        if args.total_batch_size % per_pass != 0:
+            raise ValueError(
+                f"--total_batch_size {args.total_batch_size} is not a multiple of train_batch_size x GPUs = {per_pass}."
+            )
+        args.gradient_accumulation_steps = args.total_batch_size // per_pass
 
     if not 0.0 <= args.clean_sam_prob <= 1.0:
         raise ValueError("`--clean_sam_prob` must be in [0, 1].")
@@ -910,6 +929,10 @@ def main(args):
 
     # region Train
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
+    accelerator.print(
+        f"Training on {accelerator.num_processes} GPU(s): {args.train_batch_size} per GPU x {args.gradient_accumulation_steps} "
+        f"accumulation steps = {total_batch_size} samples per update"
+    )
 
     logger.info("***** Running training *****")
     logger.info(f"  Num examples = {len(train_dataset)}")
@@ -1097,15 +1120,17 @@ def main(args):
                 if torch.cuda.is_available():
                     logs["gpu/max_memory_allocated_gb"] = torch.cuda.max_memory_allocated() / 2**30
 
+                # Every process saves its state (RNG); only the main one writes the weights (see the checkpoint hooks)
+                if global_step % args.checkpointing_steps == 0:
+                    if accelerator.is_main_process and args.checkpoints_total_limit is not None:
+                        prune_checkpoints(args.output_dir, args.checkpoints_total_limit - 1)
+                    accelerator.wait_for_everyone()
+
+                    save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
+                    accelerator.save_state(save_path)
+                    logger.info(f"Saved state to {save_path}")
+
                 if accelerator.is_main_process:
-                    if global_step % args.checkpointing_steps == 0:
-                        if args.checkpoints_total_limit is not None:
-                            prune_checkpoints(args.output_dir, args.checkpoints_total_limit - 1)
-
-                        save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                        accelerator.save_state(save_path)
-                        logger.info(f"Saved state to {save_path}")
-
                     if run_validation and global_step % args.validation_steps == 0:
                         val_logs = validation(
                             accelerator.unwrap_model(unet),

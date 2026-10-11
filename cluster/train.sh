@@ -13,6 +13,10 @@
 #   e.g. sbatch cluster/train.sh configs/train_segesr.yaml
 #        sbatch cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel --output_dir=preset/train_output/pafb
 #
+# Multi-GPU (experimental): request several GPUs at submission; the run then uses one process per GPU and
+# 8 samples per update (MULTI_GPU_TOTAL_BATCH_SIZE to change it). Each process needs its own CPUs and RAM:
+#   sbatch --gpus=2 --cpus-per-task=16 --mem=64G cluster/train.sh configs/train_segesr.yaml --output_dir=preset/train_output/segesr_2gpu
+#
 # The configs resume from the latest checkpoint of `output_dir`, so if the job hits the time limit of
 # the partition, submitting the same command again continues the training.
 

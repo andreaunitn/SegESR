@@ -150,3 +150,20 @@ EOF
     scp segesr:~/SegESR/preset/datasets/output/segesr_checkpoint-30000/RealSR/sample00/Canon_004_LR4.png ~/Downloads/
     rsync -avzP segesr:~/SegESR/preset/datasets/output/segesr_checkpoint-30000/RealSR/sample00/ ~/Downloads/segesr_RealSR/
     rsync -avz segesr:~/SegESR/metrics ./metrics
+
+
+8. MULTI-GPU TRAINING (experimental, opt-in)
+--------------------------------------------
+[CLUSTER]
+    # Only when you ask for several GPUs at submission (max 2: no node has more). One process per GPU,
+    # 8 samples per update (2 per GPU x 2 GPUs x 2 accumulation). Use its own --output_dir.
+    sbatch --gpus=2 --cpus-per-task=16 --mem=64G --time=<MaxTime> cluster/train.sh configs/train_segesr.yaml \
+        --output_dir=preset/train_output/segesr_2gpu
+
+    # Same, but keeping 4 samples per update (pure speed comparison with the single-GPU run):
+    MULTI_GPU_TOTAL_BATCH_SIZE=4 sbatch --gpus=2 --cpus-per-task=16 --mem=64G --time=<MaxTime> \
+        cluster/train.sh configs/train_segesr.yaml --output_dir=preset/train_output/segesr_2gpu_bs4
+
+    Check in the log: "Multi-GPU run on 2 GPUs (8 samples per update)" and
+                      "Training on 2 GPU(s): 2 per GPU x 2 accumulation steps = 8 samples per update"
+    Compare time/seconds_per_step in TensorBoard with the single-GPU run (4.51 s for 4 samples per update).
