@@ -30,18 +30,23 @@ cd "$SLURM_SUBMIT_DIR"
 source cluster/env.sh
 
 if [ "${SLURM_NNODES:-1}" -gt 1 ]; then
-    # The nodes meet at the IP address of the first one (node names do not resolve on every node of this cluster)
-    first_node="$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -1)"
-    MASTER_ADDR="$(srun --nodes=1 --ntasks=1 -w "$first_node" hostname -I | awk '{print $1}')"
+    # The nodes meet at the IP address of the first one. This script runs on the first node of the job, so its
+    # own address is used (node names do not resolve on every node of this cluster)
+    MASTER_ADDR="$(hostname -I | awk '{print $1}')"
     export MASTER_ADDR MASTER_PORT="${MASTER_PORT:-29500}" NUM_MACHINES="$SLURM_NNODES"
     # An automatic restart on one node only would leave the other nodes waiting forever
     export MAX_RESTARTS=0
-    echo "Multi-node run on $SLURM_NNODES nodes ($SLURM_JOB_NODELIST); main process at $MASTER_ADDR:$MASTER_PORT"
+    GPUS_PER_NODE="${SLURM_GPUS_ON_NODE:-2}"
+    echo "Multi-node run on $SLURM_NNODES nodes ($SLURM_JOB_NODELIST), $GPUS_PER_NODE GPUs each; main process at $MASTER_ADDR:$MASTER_PORT"
+    echo "GPU-related SLURM settings of the job:"
+    env | grep -E "^SLURM_(GPUS|TRES|GRES|JOB_GPUS|STEP_GPUS)" | sed 's/^/    /' || true
 
-    # One task per node; each starts one training process per GPU of its node. No GPU option here: a step gets
-    # all the job's GPUs on its node by default (and this cluster rejects a per-node GPU request inside a --gpus job)
-    srun --nodes="$SLURM_NNODES" --ntasks-per-node=1 --kill-on-bad-exit=1 \
-        --cpus-per-task="${SLURM_CPUS_PER_TASK:-8}" \
+    # One task per node; each starts one training process per GPU of its node. The job's whole-job GPU request
+    # (--gpus=4, inherited by srun through SLURM_GPUS) would be invalid for a per-node step, so it is dropped
+    # and the step asks for the GPUs of each node explicitly.
+    env -u SLURM_GPUS -u SLURM_GPUS_PER_NODE -u SLURM_GPUS_PER_TASK -u SLURM_TRES_PER_TASK \
+        srun --nodes="$SLURM_NNODES" --ntasks-per-node=1 --kill-on-bad-exit=1 \
+        --gres="gpu:${GPUS_PER_NODE}" --cpus-per-task="${SLURM_CPUS_PER_TASK:-8}" \
         bash -c 'source cluster/env.sh && MACHINE_RANK="$SLURM_NODEID" in_container bash scripts/run_train.sh "$@"' _ "$@"
 else
     in_container bash scripts/run_train.sh "$@"
