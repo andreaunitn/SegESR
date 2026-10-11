@@ -34,6 +34,13 @@ fi
 
 NUM_MACHINES="${NUM_MACHINES:-1}"
 
+if [ "$NUM_MACHINES" -gt 1 ] || [ "$NUM_GPUS" -gt 1 ]; then
+    # The two GPUs of a node sit on different CPU sockets (nvidia-smi topo: SYS), where direct GPU-to-GPU (P2P)
+    # transfers hang: GPUs of the same node exchange data through shared CPU memory instead (export
+    # NCCL_P2P_DISABLE=0 before sbatch to try P2P anyway)
+    export NCCL_P2P_DISABLE="${NCCL_P2P_DISABLE:-1}"
+fi
+
 if [ "$NUM_MACHINES" -gt 1 ]; then
     # Multi-node (set up by cluster/train.sh): this node runs one process per GPU, all nodes form one run
     LAUNCH=(accelerate launch --multi_gpu --num_machines "$NUM_MACHINES" --machine_rank "$MACHINE_RANK"
