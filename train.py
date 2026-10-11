@@ -557,7 +557,9 @@ def main(args):
     logging_dir = Path(args.logging_dir) if args.logging_dir else Path("tensorboard", Path(args.output_dir).name, "train")
 
     # region Accelerator
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    # Multi-GPU only (no effect on one GPU): gradient_as_bucket_view makes the gradients live in DDP's communication
+    # buckets instead of being copied there, which saves one fp32 copy of all trainable gradients (~6 GB per GPU)
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True, gradient_as_bucket_view=True)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
     accelerator = Accelerator(
