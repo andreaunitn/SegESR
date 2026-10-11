@@ -38,6 +38,15 @@ if [ "${SLURM_NNODES:-1}" -gt 1 ]; then
     export MAX_RESTARTS=0
     GPUS_PER_NODE="${SLURM_GPUS_ON_NODE:-2}"
     echo "Multi-node run on $SLURM_NNODES nodes ($SLURM_JOB_NODELIST), $GPUS_PER_NODE GPUs each; main process at $MASTER_ADDR:$MASTER_PORT"
+
+    # NCCL (GPU communication) picks its own network interface, which may not be reachable from the other node:
+    # use the interface of MASTER_ADDR, which the nodes already reach each other through (override by exporting
+    # NCCL_SOCKET_IFNAME before sbatch). NCCL_IB_DISABLE=1 (exported before sbatch) forces TCP instead of InfiniBand.
+    if [ -z "${NCCL_SOCKET_IFNAME:-}" ]; then
+        NCCL_SOCKET_IFNAME="$(ip -o -4 addr show | awk -v ip="$MASTER_ADDR" '{split($4, a, "/")} a[1] == ip {print $2; exit}')"
+    fi
+    export NCCL_SOCKET_IFNAME GLOO_SOCKET_IFNAME="$NCCL_SOCKET_IFNAME"
+    echo "NCCL network interface: ${NCCL_SOCKET_IFNAME:-<auto>}, NCCL_IB_DISABLE=${NCCL_IB_DISABLE:-0}"
     echo "GPU-related SLURM settings of the job:"
     env | grep -E "^SLURM_(GPUS|TRES|GRES|JOB_GPUS|STEP_GPUS)" | sed 's/^/    /' || true
 
