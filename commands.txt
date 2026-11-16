@@ -7,6 +7,19 @@ Always submit jobs from ~/SegESR, and always the files in cluster/ (never script
 Replace <jobid> with the number printed by sbatch ("Submitted batch job 12345").
 
 
+QUICK WAY: cluster/hpc (runs locally, see `cluster/hpc help`)
+------------------------------------------------------------
+[LOCAL]
+    git add -A && git commit -m "describe the change"              # the cluster only runs committed code
+    cluster/hpc submit cluster/train.sh configs/train_segesr.yaml   # git push + git pull on the cluster, sbatch, live view
+    cluster/hpc submit MAX_RESTARTS=0 --gpus=2 cluster/train.sh ...  # env vars and sbatch options go before the script
+    cluster/hpc watch [jobid]     # job state + latest output, refreshed (q quits, the job keeps running)
+    cluster/hpc log [jobid]       # live output stream (Ctrl+C stops watching, the job keeps running)
+    cluster/hpc jobs | gpus | cancel <jobid> | gpu [jobid] | shell
+Jobs keep running after you close the terminal. `hpc sync` pushes and pulls without submitting.
+Do not sync while a job is running if it may restart: the restart would use the new code.
+
+
 0. UPDATE THE CODE ON THE CLUSTER (after every change)
 ------------------------------------------------------
 [MAC]

@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+# Local helper: runs on YOUR machine (not a Slurm job, do not sbatch it). It pushes the code to GitHub and
+# pulls it on the cluster, submits jobs and shows their output.
+#
+# Jobs are submitted with sbatch, so they run on the cluster independently of this machine: closing the
+# terminal, VS Code or the connection does not stop them. Ctrl+C / q in `log` and `watch` only stops watching.
+#
+# Needs the `segesr` SSH alias (~/.ssh/config). Run `cluster/hpc help` for the commands.
+
+set -euo pipefail
+
+HOST="${HPC_HOST:-segesr}"
+REMOTE_DIR="${HPC_DIR:-SegESR}"          # relative to the home directory on the cluster
+REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20)
+
+usage() {
+    cat <<'EOF'
+Usage: hpc <command> [args]
+
+  sync                          git push the current branch, then git pull it in ~/SegESR on the cluster
+                                (refuses if there are uncommitted changes)
+  submit [-d] [VAR=val...] [sbatch options] <script> [script args]
+                                sync, then sbatch the script and open `watch` on the new job
+                                (-d: do not open watch). Examples:
+                                  hpc submit cluster/train.sh configs/train_segesr.yaml
+                                  hpc submit MAX_RESTARTS=0 --gpus=2 cluster/train.sh configs/train_segesr.yaml
+  watch [jobid] [seconds]       full-screen view: job state + latest output, refreshed (q to quit)
+  log [jobid]                   stream the output live, like tail -f (Ctrl+C to stop watching)
+  tail [jobid] [lines]          print the last lines of the output and exit (default 40)
+  jobs                          your queued/running jobs and the ones that ended in the last 2 days
+  cancel <jobid...>             stop jobs
+  gpu [jobid]                   nvidia-smi on the node of a running job
+  gpus                          free GPUs per node
+  shell                         interactive shell on the cluster in ~/SegESR
+  run <command...>              run a command on the cluster in ~/SegESR
+
+Without a jobid, the latest of your jobs (queued, running or, if none, the latest log) is used.
+EOF
+}
+
+die() { echo "hpc: $*" >&2; exit 1; }
+
+# Runs a bash script on the cluster with arguments: rsh [ssh options --] 'script' args...
+rsh() {
+    local ssh_extra=()
+    if [ "${1:-}" = "-t" ]; then ssh_extra=(-t); shift; fi
+    local script="$1"; shift
+    ssh "${SSH_OPTS[@]}" "${ssh_extra[@]}" "$HOST" "bash -c $(printf '%q' "$script") _ $(printf '%q ' "$@")"
+}
+
+# Shared remote snippets ---------------------------------------------------------------------------------------
+
+# Prints "<jobid> <log path>" for $1 (or for the latest job when $1 is empty)
+RESOLVE='
+dir="$HOME/'"$REMOTE_DIR"'"
+id="$1"
+[ -n "$id" ] || id=$(squeue -u "$USER" -h -o "%i" --sort=-i | head -1)
+if [ -z "$id" ]; then
+    f=$(ls -t "$dir"/slurm_logs/*.log 2>/dev/null | head -1)
+    [ -n "$f" ] && { id=$(basename "${f%.log}"); id=${id##*_}; }
+fi
+[ -n "$id" ] || { echo "no jobs found" >&2; exit 1; }
+f=$(scontrol show job -o "$id" 2>/dev/null | grep -oP "StdOut=\K\S+" | head -1)
+[ -n "$f" ] || f=$(ls -t "$dir"/slurm_logs/*_"$id".log 2>/dev/null | head -1)
+echo "$id ${f:-?}"
+'
+
+# Last $2 lines of log $1 as a terminal would show them: progress bars redraw their line with \r, so only the
+# last \r-segment of each line is kept; colour/cursor escape codes are removed.
+RENDER='
+render() {
+    [ -f "$1" ] || { echo "(no output yet: the job has not started)"; return; }
+    tail -c 3000000 "$1" | sed "s/\x1b\[[0-9;?]*[A-Za-z]//g" \
+        | awk -F"\r" "{for (i = NF; i > 1; i--) if (\$i != \"\") break; print \$i}" | tail -n "$2"
+}
+'
+
+code_version() {
+    local rev; rev="$(git -C "$REPO" rev-parse --short HEAD)"
+    [ -z "$(git -C "$REPO" status --porcelain)" ] || rev="$rev+local-changes"
+    echo "$rev"
+}
+
+# Commands -----------------------------------------------------------------------------------------------------
+
+cmd_sync() {
+    cd "$REPO"
+    # The cluster runs exactly a pushed commit: uncommitted changes must be committed first
+    if [ -n "$(git status --porcelain)" ]; then
+        git status --short >&2
+        die "uncommitted changes: commit them first (git add -A && git commit -m '...')"
+    fi
+    local branch head remote_head
+    branch="$(git symbolic-ref --short HEAD)" || die "not on a branch"
+    head="$(git rev-parse HEAD)"
+    git push -q origin "$branch"
+    remote_head="$(rsh '
+cd "$HOME/'"$REMOTE_DIR"'" || exit 1
+git fetch -q origin || exit 1
+if [ "$(git symbolic-ref --short HEAD)" != "$1" ]; then
+    git checkout -q "$1" 2>/dev/null || git checkout -q -b "$1" --track "origin/$1" || exit 1
+fi
+git pull -q --ff-only origin "$1" >&2 || exit 1
+git rev-parse HEAD
+' "$branch")" || die "git pull on the cluster failed (local changes there? check with: hpc run git status)"
+    [ "$remote_head" = "$head" ] || die "cluster is at ${remote_head:0:7}, expected ${head:0:7}"
+    echo "Pushed $branch and pulled on the cluster: $(git log -1 --format='%h %s')"
+}
+
+cmd_submit() {
+    local follow=1 envs=()
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -d) follow=0; shift ;;
+            [A-Za-z_]*=*) [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]] || break; envs+=("$1"); shift ;;
+            *) break ;;
+        esac
+    done
+    [ $# -ge 1 ] || die "usage: hpc submit [-d] [VAR=val...] [sbatch options] <script> [args...]"
+
+    cmd_sync
+    local rev out id
+    rev="$(code_version)"
+    # sbatch passes the submitting environment to the job, so VAR=val reaches the script
+    out="$(rsh 'cd "$HOME/'"$REMOTE_DIR"'" && n="$1" && shift && env "${@:1:$n}" sbatch --parsable "${@:$((n + 1))}"' \
+        "${#envs[@]}" "${envs[@]}" --comment="code:$rev" "$@")"
+    id="${out%%;*}"
+    echo "Submitted job $id (code $rev). It keeps running if you close this terminal."
+    echo "Follow it later with: hpc watch $id   (or: hpc log $id)"
+    if [ "$follow" = 1 ] && [ -t 1 ]; then sleep 1; cmd_watch "$id"; fi
+}
+
+cmd_watch() {
+    local id="${1:-}" every="${2:-3}" info log rows cols n out key
+    info="$(rsh "$RESOLVE" "$id")" || exit 1
+    id="${info%% *}"; log="${info#* }"
+    [ -t 1 ] || die "watch needs a terminal (use: hpc tail)"
+
+    tput smcup; tput civis
+    trap 'tput cnorm; tput rmcup' EXIT
+    trap 'exit 0' INT TERM
+    while :; do
+        rows=$(tput lines); cols=$(tput cols); n=$((rows - 5)); [ "$n" -gt 1 ] || n=1
+        out="$(rsh "$RENDER"'
+id="$1"; log="$2"; n="$3"
+s=$(squeue -j "$id" -h -o "%T|%M|%l|%N|%r|%P|%j|%k" 2>/dev/null)
+if [ -n "$s" ]; then
+    IFS="|" read -r st el lim node reason part name comment <<< "$s"
+    echo "Job $id  $name  [$part]  $comment"
+    if [ "$st" = PENDING ]; then echo "PENDING   waiting for: $reason   (limit $lim)"
+    else echo "$st   elapsed $el / $lim   on $node"; fi
+else
+    IFS="|" read -r st el ec node name <<< "$(sacct -j "$id" -X -n -P -o State,Elapsed,ExitCode,NodeList,JobName 2>/dev/null | head -1)"
+    echo "Job $id  $name  (no longer running)"
+    echo "${st:-UNKNOWN}   elapsed $el   exit code $ec   on $node"
+fi
+echo "Output: $log"
+render "$log" "$n"
+' "$id" "$log" "$n" 2>&1)" || out="(connection problem, retrying... the job is not affected)"$'\n'"$out"
+        tput cup 0 0
+        printf '%s\n' "$out" | head -n $((rows - 1)) | while IFS= read -r line; do
+            printf '%s\e[K\n' "${line:0:$cols}"
+        done
+        tput ed
+        printf '\e[7m q: quit (the job keeps running) | refresh every %ss | %s \e[0m' "$every" "$(date +%H:%M:%S)"
+        if read -rsn1 -t "$every" key && [ "$key" = q ]; then break; fi
+    done
+}
+
+cmd_log() {
+    local info id log
+    info="$(rsh "$RESOLVE" "${1:-}")" || exit 1
+    id="${info%% *}"; log="${info#* }"
+    echo "== Job $id: $log (Ctrl+C stops watching, the job keeps running)"
+    rsh -t "$RENDER"'
+render "$1" 50
+[ -f "$1" ] || echo "(waiting for the job to start...)"
+exec tail -c 0 -F "$1" 2>/dev/null
+' "$log"
+}
+
+cmd_tail() {
+    local info
+    info="$(rsh "$RESOLVE" "${1:-}")" || exit 1
+    echo "== Job ${info%% *}: ${info#* }"
+    rsh "$RENDER"'render "$1" "$2"' "${info#* }" "${2:-40}"
+}
+
+cmd_jobs() {
+    rsh '
+echo "== Queued / running"
+squeue -u "$USER" -o "%.14i %.16P %.22j %.9T %.11M %.11l %.4D %.24R %k"
+echo
+echo "== Ended in the last 2 days"
+sacct -u "$USER" -X -S now-2days -s CD,F,CA,TO,OOM,NF -o JobID%14,JobName%22,State%12,Elapsed,ExitCode,End,Comment%30
+'
+}
+
+cmd_cancel() {
+    [ $# -ge 1 ] || die "usage: hpc cancel <jobid...>"
+    rsh 'scancel "$@" && echo "Cancelled: $*"' "$@"
+}
+
+cmd_gpu() {
+    local info
+    info="$(rsh "$RESOLVE" "${1:-}")" || exit 1
+    rsh 'srun --jobid="$1" --overlap nvidia-smi' "${info%% *}"
+}
+
+cmd_gpus() {
+    rsh '
+printf "%-10s %-8s %5s %5s\n" NODE STATE TOTAL FREE
+sinfo -N -h -O "NodeList:12,StateCompact:10,Gres:40,GresUsed:60" | sort -u | awk "\$3 ~ /gpu/ {
+    split(\$3, g, \":\"); total = g[3] + 0
+    u = \$4; sub(/\\(.*/, \"\", u); split(u, h, \":\"); used = h[3] + 0
+    free = (\$2 ~ /down|drain|fail/) ? 0 : total - used; sum += free
+    printf \"%-10s %-8s %5d %5d\n\", \$1, \$2, total, free
+} END { print \"Free GPUs: \" sum }"
+'
+}
+
+cmd_shell() { ssh "${SSH_OPTS[@]}" -t "$HOST" "cd $REMOTE_DIR && exec bash -l"; }
+
+cmd_run() {
+    [ $# -ge 1 ] || die "usage: hpc run <command...>"
+    ssh "${SSH_OPTS[@]}" "$HOST" "cd $REMOTE_DIR && $*"
+}
+
+case "${1:-help}" in
+    sync|submit|watch|log|tail|jobs|cancel|gpu|gpus|shell|run) c="$1"; shift; "cmd_$c" "$@" ;;
+    help|-h|--help) usage ;;
+    *) usage >&2; exit 1 ;;
+esac
