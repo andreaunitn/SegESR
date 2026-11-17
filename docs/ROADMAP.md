@@ -138,7 +138,7 @@ The SD VAE compresses by 8× and loses fine structures (small text, thin lines, 
 | Step | Goal | Status |
 |---|---|---|
 | V.0 | VAE ceiling on RealSR and DRealSR: decoder(encoder(GT)) and decoder(best latent), scored like SR outputs (`data_tools/vae_ceiling.py`, `cluster/vae_ceiling.sh`). Compare with the SeeSR and SegESR outputs | doing |
-| V.1 | Fine-structure benchmark: error per frequency band, edge F-score, OCR on small text (as PGSR, TextOCR). Bands and edges: `data_tools/fine_structure.py`, `cluster/fine_structure.sh`; OCR later | doing |
+| V.1 | Fine-structure benchmark: error per frequency band, edge F-score, OCR on small text (as PGSR, TextOCR). Bands and edges: `data_tools/fine_structure.py`, `cluster/fine_structure.sh`. **Bands and edges fail the gate** (VAE share of the error 9–13%); OCR postponed | done |
 | V.2 | Baseline decoder adapter: LR features injected uniformly into the frozen SD VAE decoder (CFW- and PGSR-like), trained on latents of a frozen SR model | todo |
 | V.3 | Evidence-aware gating: a per-pixel gate predicted from the LR (how informative it is locally), with a global scale for inference-time control | todo |
 | V.4 | Plug-in test: the same decoder on other frozen models (SeeSR, SegESR, OSEDiff, PiSA-SR), with and without light fine-tuning | todo |
@@ -182,3 +182,20 @@ It reuses everything done so far:
 It needs little GPU time. The step 0.1 results point there: fine-tuning moves SeeSR and SegESR towards perception (MUSIQ and MANIQA up, PSNR, LPIPS and DISTS worse).
 
 Before starting it: a targeted literature check on uncertainty and conformal prediction for restoration, and on HalluGen (CVPR'26).
+
+**Literature check (done).** Hallucination maps and scores exist:
+- Conformal SR (NeurIPS'25);
+- Hallucination Score (MLLM-based, preprint);
+- CHEM;
+- HalluGen (CVPR'26, MRI).
+
+Nobody measures the **excess of generated high-frequency energy** of diffusion SR models against the GT, or checks which metrics reward it.
+
+**Key fact.** For ×4 SR the LR holds frequencies only below 1/8 cycle per HR pixel, so everything above it is generated. V.1 shows the models generate 6–12× the GT's energy in the highest octave, more after fine-tuning and with SegESR.
+
+| Step | Goal | Status |
+|---|---|---|
+| H.0a | V.1 metrics on DIV2K (sharp GT): does the excess of generated energy hold, or is it due to soft RealSR/DRealSR GTs? | doing |
+| H.0b | Controlled test (`data_tools/band_scale.py`, `cluster/band_scale.sh`): scale the frequencies above the LR Nyquist of SeeSR outputs (×0, 0.25, 0.5, 1, 1.5, 2, and a per-octave oracle matching the GT energy), then see which metrics reward more generated detail | doing |
+| H.1 | If H.0 confirms: the same measure on more models (SeeSR, OSEDiff, PiSA-SR, SegESR…), then a calibration of the generated detail driven by the LR (post-hoc or in the decoder of V.2) | todo |
+
