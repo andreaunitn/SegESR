@@ -39,8 +39,9 @@ Status: `todo` · `doing` · `done` · `dropped`
 | Step | Goal | Status |
 |---|---|---|
 | 0.1 | Test SegESR (with and without SAM 2 refresh) and fine-tuned SeeSR at `checkpoint-15000` on RealSR + DRealSR | doing |
-| 0.2 | Script that collects all `metrics/*/results_*.json` into one table | todo |
+| 0.2 | Script that collects all `metrics/*/results_*.json` into one table (`data_tools/results_table.py`) | done |
 | 0.3 | Align with the SRSR protocol: zero-shot SeeSR must give 25.18 dB on RealSR | todo |
+| 0.4 | Runtime per image in `test.py` (only measurable during generation), plus TOPIQ and LIQE in `metrics.py` (already in pyiqa 0.1.13). A-FINE needs a newer pyiqa: added before the final comparisons, recomputing every metric with the same version | todo |
 
 **Gate 0:**
 - Does SegESR clearly beat fine-tuned SeeSR at the same number of steps?

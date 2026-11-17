@@ -151,14 +151,12 @@ Do not sync while a job is running if it may restart: the restart would use the 
 
 7. RESULTS
 ----------
-[CLUSTER] all metrics as one table:
-    python3 - <<'EOF'
-import glob, json, os
-for path in sorted(glob.glob("metrics/*/results_*.json")):
-    dataset, results = next(iter(json.load(open(path)).items()))
-    name = os.path.basename(path)[len("results_"):-len(".json")]
-    print(f"{dataset:10s} {name:40s} " + "  ".join(f"{k}={v:.4f}" for k, v in dict(results).items()))
-EOF
+[CLUSTER] all metrics as one table per dataset (best value of each metric marked with *):
+    python3 data_tools/results_table.py
+    python3 data_tools/results_table.py seesr checkpoint-15000 --datasets RealSR DRealSR   # only some results
+    python3 data_tools/results_table.py --format markdown                                   # for docs/EXPERIMENTS.md
+[LOCAL] the same without logging in:
+    cluster/hpc run python3 data_tools/results_table.py
 
 [MAC] download images / folders to inspect:
     scp segesr:~/SegESR/preset/datasets/output/segesr_checkpoint-30000/RealSR/sample00/Canon_004_LR4.png ~/Downloads/
