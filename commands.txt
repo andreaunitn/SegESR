@@ -128,6 +128,10 @@ Do not sync while a job is running if it may restart: the restart would use the 
     # Only recompute the metrics of images already generated
     SKIP_GENERATION=true DATASETS=RealSR sbatch -J metrics cluster/test.sh preset/train_output/segesr
 
+    # VAE ceiling (best any latent SR model can do with the SD 2 VAE), scored like an SR output
+    sbatch cluster/vae_ceiling.sh                 # decoder(encoder(GT)) -> results_vae_sd2_encode
+    MODE=optimize sbatch cluster/vae_ceiling.sh   # decoder(best latent) -> results_vae_sd2_optimize (slower)
+
     Interrupted test jobs: submit the same command again; images already generated are skipped.
     Outputs:  preset/datasets/output/<run>_<checkpoint>/<dataset>/sample00/
     Metrics:  metrics/<dataset>/results_<run>_<checkpoint>.json

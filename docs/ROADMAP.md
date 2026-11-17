@@ -1,13 +1,9 @@
 # SegESR roadmap
 
-Method: **B + C + D**. The evaluation contribution is **A**.
+Two research directions share Phase 0.
 
-- **B** gives every SAM 2 segment a reliability score.
-- **C** controls fidelity versus generation per segment, driven by that score.
-- **D** generates in two steps (draft, SAM 2 re-check on the draft, refinement).
-- **A** is a segment-level hallucination metric.
-
-The novelty is the per-segment reliability and its use to decide how much to generate in each segment. The closed loop and the two steps are the setting, not the contribution: InstantIR and SegSR already re-estimate conditions during sampling. See the survey notes for the related work: SRSR (NeurIPS'25), SAMSR (IJCAI'25), HoliSDiP, SegSR, InstantIR, MMSR (CVPR'25), CODSR, DTPSR (CVPR'26) and RASS (IJCV'26).
+- **Active: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds, plus an analysis of how much of the SR error comes from the VAE. See [Track V](#track-v-evidence-aware-decoder-active).
+- **On hold: the segmentation track (Phases 1–5 below).**
 
 ## How we work
 
@@ -47,6 +43,17 @@ Status: `todo` · `doing` · `done` · `dropped`
 - Does SegESR clearly beat fine-tuned SeeSR at the same number of steps?
 - Does the SAM 2 refresh help?
 - Where does the README's +2.22 dB come from (dataset, protocol)?
+
+## Segmentation track (on hold)
+
+Method: **B + C + D**. The evaluation contribution is **A**.
+
+- **B** gives every SAM 2 segment a reliability score.
+- **C** controls fidelity versus generation per segment, driven by that score.
+- **D** generates in two steps (draft, SAM 2 re-check on the draft, refinement).
+- **A** is a segment-level hallucination metric.
+
+The novelty is the per-segment reliability and its use to decide how much to generate in each segment. The closed loop and the two steps are the setting, not the contribution: InstantIR and SegSR already re-estimate conditions during sampling. See the survey notes for the related work: SRSR (NeurIPS'25), SAMSR (IJCAI'25), HoliSDiP, SegSR, InstantIR, MMSR (CVPR'25), CODSR, DTPSR (CVPR'26) and RASS (IJCV'26).
 
 ## Phase 1: metric A (segment-level hallucinations)
 
@@ -110,3 +117,33 @@ Ablations for 5.2:
 - SAM masks against SLIC superpixels;
 - SAM loss against CLIP and DINO losses;
 - reliability weights against SAMSR, SRSR and global (InstantIR) weights.
+
+## Track V: evidence-aware decoder (active)
+
+The SD VAE compresses by 8× and loses fine structures (small text, thin lines, textures). No diffusion prior can recover them (TVT, ICCV'25). What already exists:
+
+| Approach | Works |
+|---|---|
+| Less compression | TVT (4× VAE) |
+| More latent channels | DPIR, TOC-SR, LCUDiff (16-channel VAEs) |
+| Degradation-robust encoder | OSEDiff, DPIR, SUPIR |
+| LR features into the decoder | StableSR CFW (one global weight), Diff-Restorer, GuideSR (full-resolution branch) |
+| Pre-VAE pixel evidence | PGSR (NeurIPS'26, FLUX): injected uniformly, no gating, no inference control, not plug-in |
+
+**Open, and our target:**
+- **A decoder that decides per pixel how much to trust the LR**, from how informative the LR is there, with inference-time control.
+- **Plugging it into several frozen latent SR models** (SeeSR, SegESR, OSEDiff, PiSA-SR) without retraining them.
+- **A dataset-level analysis** of how much of the SR error comes from the VAE.
+
+| Step | Goal | Status |
+|---|---|---|
+| V.0 | VAE ceiling on RealSR and DRealSR: decoder(encoder(GT)) and decoder(best latent), scored like SR outputs (`data_tools/vae_ceiling.py`, `cluster/vae_ceiling.sh`). Compare with the SeeSR and SegESR outputs | doing |
+| V.1 | Fine-structure benchmark: error per frequency band, edge F-score, OCR on small text (as PGSR, TextOCR) | todo |
+| V.2 | Baseline decoder adapter: LR features injected uniformly into the frozen SD VAE decoder (CFW- and PGSR-like), trained on latents of a frozen SR model | todo |
+| V.3 | Evidence-aware gating: a per-pixel gate predicted from the LR (how informative it is locally), with a global scale for inference-time control | todo |
+| V.4 | Plug-in test: the same decoder on other frozen models (SeeSR, SegESR, OSEDiff, PiSA-SR), with and without light fine-tuning | todo |
+| V.5 | Baselines (StableSR CFW, GuideSR, TVT, PGSR on SD 2 if its code allows), ablations, writing | todo |
+
+**Gate V.0:** how far are the SR outputs from the VAE ceiling?
+- **Overall:** PSNR, LPIPS and DISTS against `vae_sd2_encode` and `vae_sd2_optimize`.
+- **On fine structures (V.1):** the direction is worth it if a large part of the fine-structure error is already present in the VAE reconstruction of the GT.
