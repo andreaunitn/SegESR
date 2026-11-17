@@ -117,6 +117,7 @@ Do not sync while a job is running if it may restart: the restart would use the 
         DATASETS=$d sbatch -J segesr_$d cluster/test.sh preset/train_output/segesr
     done
     # same with preset/train_output/seesr_finetuned, preset/train_output/pafb, ...
+    # only some checkpoints: CHECKPOINTS="checkpoint-15000" DATASETS=RealSR sbatch cluster/test.sh preset/train_output/segesr
 
     # Test-time ablation: full SegESR WITHOUT the SAM 2 refresh (saved with the suffix _norefresh)
     for d in RealSR DRealSR RealLR200 DIV2K; do

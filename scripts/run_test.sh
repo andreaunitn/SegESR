@@ -7,6 +7,7 @@
 #   CONFIG               test config (default: configs/test_default.yaml)
 #
 # Environment variables:
+#   CHECKPOINTS       space-separated checkpoint folder names to test, e.g. "checkpoint-15000" (default: all of them)
 #   DATASETS          space-separated dataset names (default: "DIV2K DRealSR RealLR200 RealSR")
 #   SKIP_GENERATION   "true" to only (re)compute metrics on existing outputs (default: false)
 #   TEST_ARGS         extra test.py flags, e.g. "--sam_refresh_timesteps" to disable the SAM 2 refresh (default: none)
@@ -41,6 +42,15 @@ fi
 
 if [ -d "$CHECKPOINT_BASE_DIR/unet" ] && [ -d "$CHECKPOINT_BASE_DIR/controlnet" ]; then
     checkpoints=("$CHECKPOINT_BASE_DIR")   # a single model, e.g. the original SeeSR
+elif [ -n "${CHECKPOINTS:-}" ]; then
+    checkpoints=()
+    for name in $CHECKPOINTS; do
+        if [ ! -d "$CHECKPOINT_BASE_DIR/$name" ]; then
+            echo "ERROR: checkpoint '$CHECKPOINT_BASE_DIR/$name' not found."
+            exit 1
+        fi
+        checkpoints+=("$CHECKPOINT_BASE_DIR/$name")
+    done
 else
     mapfile -t checkpoints < <(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" | sort -V)
 fi

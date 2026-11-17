@@ -12,6 +12,7 @@
 #   e.g. sbatch cluster/test.sh preset/train_output/segesr          # every checkpoint of a run
 #        sbatch cluster/test.sh preset/models/seesr                    # the original SeeSR (zero-shot baseline)
 #        DATASETS="RealSR DRealSR" sbatch cluster/test.sh preset/train_output/segesr
+#        CHECKPOINTS=checkpoint-15000 sbatch cluster/test.sh preset/train_output/segesr   # one checkpoint only
 # Metrics are written to metrics/<dataset>/results_<run>_<checkpoint>.json (results_<model>.json for a single model).
 
 set -euo pipefail
