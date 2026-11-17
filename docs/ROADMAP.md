@@ -2,7 +2,7 @@
 
 Two research directions share Phase 0.
 
-- **Active: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds, plus an analysis of how much of the SR error comes from the VAE. See [Track V](#track-v-evidence-aware-decoder-active).
+- **Active: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds, plus an analysis of how much of the SR error comes from the VAE. See [Track V](#track-v-evidence-aware-decoder-active). Stop criteria and the fallback track H are at the end of the file.
 - **On hold: the segmentation track (Phases 1–5 below).**
 
 ## How we work
@@ -144,6 +144,41 @@ The SD VAE compresses by 8× and loses fine structures (small text, thin lines, 
 | V.4 | Plug-in test: the same decoder on other frozen models (SeeSR, SegESR, OSEDiff, PiSA-SR), with and without light fine-tuning | todo |
 | V.5 | Baselines (StableSR CFW, GuideSR, TVT, PGSR on SD 2 if its code allows), ablations, writing | todo |
 
-**Gate V.0:** how far are the SR outputs from the VAE ceiling?
-- **Overall:** PSNR, LPIPS and DISTS against `vae_sd2_encode` and `vae_sd2_optimize`.
-- **On fine structures (V.1):** the direction is worth it if a large part of the fine-structure error is already present in the VAE reconstruction of the GT.
+**Gate V.0 (decoder(encoder(GT)) done, best latent running).**
+- The VAE reconstruction of the GT reaches 35.39 dB / LPIPS 0.0365 on RealSR and 39.78 dB / 0.0335 on DRealSR.
+- Every SR model is at 24–28 dB.
+- On whole images, the VAE explains only a small part of the error (about 7–10% of the MSE). Most of it comes from the latent estimated by the diffusion model.
+- So "the VAE loses details" is a weak motivation on average. The track continues only if one of the two gates below passes.
+
+**Gate V.1: does the VAE matter on fine structures?** Go on if at least one of these holds on RealSR + DRealSR:
+- **Small text:** the OCR word accuracy of decoder(encoder(GT)) is at least 10 points below the GT's.
+- **High frequencies:** the VAE reconstruction already holds at least 30% of the SR models' error in the highest frequency band (or in thin-edge regions).
+
+**Gate V.2: can the decoder correct the latent with the LR?** A decoder adapter with uniform LR injection, on frozen SeeSR, must give:
+- at least **+0.5 dB PSNR** on both RealSR and DRealSR;
+- LPIPS no worse than +0.005.
+
+It must get there within about one week of work. PGSR reports +2.40 dB on an SD 2.1 model, so a smaller gain means our setup does not reproduce the effect.
+
+**Decision:**
+- **V.1 passes:** the motivation is the VAE losing fine structures. Continue with V.2 and the following steps.
+- **V.1 fails, V.2 passes:** the motivation becomes the decoder as the place where the LR corrects errors of the diffusion model, not VAE capacity. Continue with V.3–V.5.
+- **Both fail:** stop Track V and switch to the fallback below.
+
+## Fallback track H: where latent SR models fail (error decomposition and hallucinations)
+
+Goal: an analysis, plus a model-agnostic tool. It splits the error of latent SR models into three parts:
+- what the VAE loses (V.0 already measures it);
+- the error in the estimated latent;
+- invented content (hallucinations).
+
+It also locates hallucinations per pixel, for example from disagreement between samples or from consistency with the LR after re-degradation, and corrects them where the LR contradicts the output. It runs on frozen models (SeeSR, OSEDiff, PiSA-SR, SegESR…).
+
+It reuses everything done so far:
+- `vae_ceiling.py` and the SR outputs;
+- the metrics pipeline;
+- metric A of the segmentation track (segment-level hallucinations).
+
+It needs little GPU time. The step 0.1 results point there: fine-tuning moves SeeSR and SegESR towards perception (MUSIQ and MANIQA up, PSNR, LPIPS and DISTS worse).
+
+Before starting it: a targeted literature check on uncertainty and conformal prediction for restoration, and on HalluGen (CVPR'26).
