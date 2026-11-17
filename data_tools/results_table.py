@@ -1,6 +1,7 @@
 """
 Collects the metrics written by `data_tools/metrics.py` (metrics/<dataset>/results_<name>.json) into one table
-per dataset, with the best value of each metric marked.
+per dataset, with the best value of each metric marked. With --prefix finestruct it shows the fine-structure
+metrics of `data_tools/fine_structure.py` instead.
 
 Usage (standard library only, no container needed):
     python3 data_tools/results_table.py                              # every result
@@ -16,8 +17,8 @@ import glob
 import json
 import os
 
-# Known metrics in display order, with their direction (True: higher is better) and decimals.
-# Metrics not listed here are shown after these, in alphabetical order, without a best value.
+# Known metrics in display order, with their direction (True: higher is better, False: lower is better,
+# None: not ranked) and decimals. Other metrics are shown after these, in alphabetical order, without a best value.
 METRICS = {
     "psnr": (True, 2),
     "ssim": (True, 4),
@@ -28,16 +29,27 @@ METRICS = {
     "clipiqa": (True, 4),
     "musiq": (True, 2),
     "maniqa": (True, 4),
+    # data_tools/fine_structure.py (finestruct_<name>.json); energy_<band> is best near 1, so it is not ranked
+    "psnr_low": (True, 2),
+    "psnr_midlow": (True, 2),
+    "psnr_midhigh": (True, 2),
+    "psnr_high": (True, 2),
+    "edge_f": (True, 4),
+    "edge_psnr": (True, 2),
+    "energy_low": (None, 3),
+    "energy_midlow": (None, 3),
+    "energy_midhigh": (None, 3),
+    "energy_high": (None, 3),
 }
 
-def load_results(metrics_dir):
-    """Returns {dataset: {name: {metric: value}}} for every metrics/<dataset>/results_<name>.json."""
+def load_results(metrics_dir, prefix="results"):
+    """Returns {dataset: {name: {metric: value}}} for every metrics/<dataset>/<prefix>_<name>.json."""
 
     results = {}
-    for path in sorted(glob.glob(os.path.join(metrics_dir, "*", "results_*.json"))):
+    for path in sorted(glob.glob(os.path.join(metrics_dir, "*", f"{prefix}_*.json"))):
         with open(path) as f:
             content = json.load(f)
-        name = os.path.basename(path)[len("results_"):-len(".json")]
+        name = os.path.basename(path)[len(prefix) + 1:-len(".json")]
         for dataset, values in content.items():
             results.setdefault(dataset, {})[name] = {metric: float(value) for metric, value in values}
     return results
@@ -66,7 +78,7 @@ def best_values(rows, metrics):
     best = {}
     for metric in metrics:
         values = [values[metric] for values in rows.values() if metric in values]
-        if metric in METRICS and len(values) >= 2:
+        if metric in METRICS and METRICS[metric][0] is not None and len(values) >= 2:
             best[metric] = max(values) if METRICS[metric][0] else min(values)
     return best
 
@@ -74,7 +86,7 @@ def format_value(metric, value):
     return f"{value:.{METRICS.get(metric, (True, 4))[1]}f}"
 
 def header_label(metric):
-    if metric not in METRICS:
+    if metric not in METRICS or METRICS[metric][0] is None:
         return metric.upper()
     return metric.upper() + ("↑" if METRICS[metric][0] else "↓")
 
@@ -114,15 +126,17 @@ def parse_args(argv=None):
                         "(or matches one of these globs, e.g. 'segesr_*'). Default: all.")
     parser.add_argument("--datasets", nargs="*", default=None, help="Datasets to show (default: all).")
     parser.add_argument("--metrics_dir", default="metrics", help="Folder written by data_tools/metrics.py.")
+    parser.add_argument("--prefix", default="results",
+                        help="File prefix: results (data_tools/metrics.py) or finestruct (data_tools/fine_structure.py).")
     parser.add_argument("--format", choices=["text", "markdown"], default="text",
                         help="text for the terminal (best value marked with *), markdown for docs/EXPERIMENTS.md (best in bold).")
     return parser.parse_args(argv)
 
 def main(argv=None):
     args = parse_args(argv)
-    results = load_results(args.metrics_dir)
+    results = load_results(args.metrics_dir, args.prefix)
     if not results:
-        raise SystemExit(f"No results found in {args.metrics_dir}/<dataset>/results_<name>.json")
+        raise SystemExit(f"No results found in {args.metrics_dir}/<dataset>/{args.prefix}_<name>.json")
 
     shown = 0
     for dataset in sorted(results):

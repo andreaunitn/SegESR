@@ -132,6 +132,10 @@ Do not sync while a job is running if it may restart: the restart would use the 
     sbatch cluster/vae_ceiling.sh                 # decoder(encoder(GT)) -> results_vae_sd2_encode
     MODE=optimize sbatch cluster/vae_ceiling.sh   # decoder(best latent) -> results_vae_sd2_optimize (slower)
 
+    # Fine-structure metrics (error per frequency band, edges) of every output folder; CPU only
+    sbatch cluster/fine_structure.sh              # -> metrics/<dataset>/finestruct_<name>.json
+    python3 data_tools/results_table.py --prefix finestruct
+
     Interrupted test jobs: submit the same command again; images already generated are skipped.
     Outputs:  preset/datasets/output/<run>_<checkpoint>/<dataset>/sample00/
     Metrics:  metrics/<dataset>/results_<run>_<checkpoint>.json
