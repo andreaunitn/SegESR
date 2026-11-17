@@ -40,9 +40,8 @@ if [ ! -f "$CONFIG" ]; then
     exit 1
 fi
 
-if [ -d "$CHECKPOINT_BASE_DIR/unet" ] && [ -d "$CHECKPOINT_BASE_DIR/controlnet" ]; then
-    checkpoints=("$CHECKPOINT_BASE_DIR")   # a single model, e.g. the original SeeSR
-elif [ -n "${CHECKPOINTS:-}" ]; then
+# CHECKPOINTS comes first: a run folder also holds the final model ('unet/' + 'controlnet/') next to its checkpoints
+if [ -n "${CHECKPOINTS:-}" ]; then
     checkpoints=()
     for name in $CHECKPOINTS; do
         if [ ! -d "$CHECKPOINT_BASE_DIR/$name" ]; then
@@ -51,6 +50,8 @@ elif [ -n "${CHECKPOINTS:-}" ]; then
         fi
         checkpoints+=("$CHECKPOINT_BASE_DIR/$name")
     done
+elif [ -d "$CHECKPOINT_BASE_DIR/unet" ] && [ -d "$CHECKPOINT_BASE_DIR/controlnet" ]; then
+    checkpoints=("$CHECKPOINT_BASE_DIR")   # a single model, e.g. the original SeeSR or the final model of a run
 else
     mapfile -t checkpoints < <(find "$CHECKPOINT_BASE_DIR" -maxdepth 1 -type d -name "checkpoint-*" | sort -V)
 fi
