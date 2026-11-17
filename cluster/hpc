@@ -6,6 +6,7 @@
 # terminal, VS Code or the connection does not stop them. Ctrl+C / q in `log` and `watch` only stops watching.
 #
 # Needs the `segesr` SSH alias (~/.ssh/config). Run `cluster/hpc help` for the commands.
+# On the cluster itself (e.g. a VS Code Remote-SSH terminal) the viewing commands run directly, without SSH.
 
 set -euo pipefail
 
@@ -13,6 +14,13 @@ HOST="${HPC_HOST:-segesr}"
 REMOTE_DIR="${HPC_DIR:-SegESR}"          # relative to the home directory on the cluster
 REPO="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 SSH_OPTS=(-o BatchMode=yes -o ConnectTimeout=20)
+
+# Already on the cluster (Slurm commands available, no HPC_HOST forced): run everything here, in this repository
+ON_CLUSTER=0
+if [ -z "${HPC_HOST:-}" ] && command -v squeue >/dev/null 2>&1; then
+    ON_CLUSTER=1
+    REMOTE_DIR="${REPO#"$HOME"/}"
+fi
 
 usage() {
     cat <<'EOF'
@@ -36,6 +44,7 @@ Usage: hpc <command> [args]
   run <command...>              run a command on the cluster in ~/SegESR
 
 Without a jobid, the latest of your jobs (queued, running or, if none, the latest log) is used.
+On the cluster itself every command except sync and submit works too, without SSH.
 EOF
 }
 
@@ -46,7 +55,16 @@ rsh() {
     local ssh_extra=()
     if [ "${1:-}" = "-t" ]; then ssh_extra=(-t); shift; fi
     local script="$1"; shift
+    if [ "$ON_CLUSTER" = 1 ]; then
+        bash -c "$script" _ "$@"
+        return
+    fi
     ssh "${SSH_OPTS[@]}" "${ssh_extra[@]}" "$HOST" "bash -c $(printf '%q' "$script") _ $(printf '%q ' "$@")"
+}
+
+# sync and submit push from your machine: on the cluster they would push the cluster's copy instead
+local_only() {
+    [ "$ON_CLUSTER" = 0 ] || die "'$1' runs on your machine, not on the cluster (here: git pull, then sbatch ...)"
 }
 
 # Shared remote snippets ---------------------------------------------------------------------------------------
@@ -85,6 +103,7 @@ code_version() {
 # Commands -----------------------------------------------------------------------------------------------------
 
 cmd_sync() {
+    local_only sync
     cd "$REPO"
     # The cluster runs exactly a pushed commit: uncommitted changes must be committed first
     if [ -n "$(git status --porcelain)" ]; then
@@ -109,6 +128,7 @@ git rev-parse HEAD
 }
 
 cmd_submit() {
+    local_only submit
     local follow=1 envs=()
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -220,10 +240,14 @@ sinfo -N -h -O "NodeList:12,StateCompact:10,Gres:40,GresUsed:60" | sort -u | awk
 '
 }
 
-cmd_shell() { ssh "${SSH_OPTS[@]}" -t "$HOST" "cd $REMOTE_DIR && exec bash -l"; }
+cmd_shell() {
+    if [ "$ON_CLUSTER" = 1 ]; then cd "$REPO" && exec bash -l; fi
+    ssh "${SSH_OPTS[@]}" -t "$HOST" "cd $REMOTE_DIR && exec bash -l"
+}
 
 cmd_run() {
     [ $# -ge 1 ] || die "usage: hpc run <command...>"
+    if [ "$ON_CLUSTER" = 1 ]; then cd "$REPO" && exec bash -c "$*"; fi
     ssh "${SSH_OPTS[@]}" "$HOST" "cd $REMOTE_DIR && $*"
 }
 

@@ -17,6 +17,7 @@ QUICK WAY: cluster/hpc (runs locally, see `cluster/hpc help`)
     cluster/hpc log [jobid]       # live output stream (Ctrl+C stops watching, the job keeps running)
     cluster/hpc jobs | gpus | cancel <jobid> | gpu [jobid] | shell
 Jobs keep running after you close the terminal. `hpc sync` pushes and pulls without submitting.
+In a terminal on the cluster (e.g. VS Code Remote-SSH) watch, log, tail, jobs, ... work too; sync and submit do not.
 Do not sync while a job is running if it may restart: the restart would use the new code.
 
 
