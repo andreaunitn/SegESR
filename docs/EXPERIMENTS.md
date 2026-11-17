@@ -75,4 +75,21 @@ Bands are octaves of the spatial frequency, from `low` [0, 1/16) to `high` [1/4,
 **Findings:**
 - **Gate V.1 (frequencies and edges) fails.** The VAE reconstruction of the GT holds only about 10–13% of SeeSR's error in the `high` band (RealSR 12.6%, DRealSR 10%) and about 9% around edges, against the 30% threshold. The OCR part of V.1 is still to do.
 - **Where the error is.** For every SR model the largest error is in the `midhigh` band, not in `high`.
-- **The SR models put much more high-frequency energy than the GT.** In the `high` band they have 5.9–8.2× the GT's energy on RealSR and 7.4–12.3× on DRealSR, while the VAE stays slightly below 1. The excess grows with fine-tuning and with SegESR, in the same order as MUSIQ and MANIQA: invented detail or over-sharpening.
+- **[Superseded, see step H.0a]** The energy columns above are means of per-image ratios, which nearly flat images inflate. **The SR models put much more high-frequency energy than the GT.** In the `high` band they have 5.9–8.2× the GT's energy on RealSR and 7.4–12.3× on DRealSR, while the VAE stays slightly below 1. The excess grows with fine-tuning and with SegESR, in the same order as MUSIQ and MANIQA: invented detail or over-sharpening.
+
+## Step H.0a: generated energy on a sharp GT (DIV2K)
+
+Job 1053286 (commit 2e75e8a) ran `fine_structure.sh` on SeeSR's DIV2K outputs. Its per-image mean showed 8.95× in the `midlow` band, an artefact of nearly flat images. It was checked locally with robust statistics, on all 100 RealSR images and 100 DIV2K images (every 30th):
+
+| Dataset | Band | Mean of per-image ratios | Median | Ratio of summed energies |
+|---|---|---|---|---|
+| RealSR | midhigh | 1.39 | 1.13 | 1.03 |
+| RealSR | high | 5.92 | 5.02 | 4.48 |
+| DIV2K | midhigh | 1.05 | 0.73 | 0.61 |
+| DIV2K | high | 1.33 | 0.77 | 0.60 |
+
+**Findings:**
+- On RealSR the excess in the highest octave is real: 10th percentile 1.67, median 5.0.
+- On DIV2K, whose GT is sharp, SeeSR generates *less* fine detail than the GT.
+- So SeeSR is not over-generating in absolute terms. Its detail follows the sharp training images, and the camera-captured GTs of RealSR and DRealSR are softer.
+- `fine_structure.py` now reports the ratio of summed energies (`energy_<band>`) and the median (`energy_<band>_median`).

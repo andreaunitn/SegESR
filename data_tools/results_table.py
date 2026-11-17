@@ -40,6 +40,10 @@ METRICS = {
     "energy_midlow": (None, 3),
     "energy_midhigh": (None, 3),
     "energy_high": (None, 3),
+    "energy_low_median": (None, 3),
+    "energy_midlow_median": (None, 3),
+    "energy_midhigh_median": (None, 3),
+    "energy_high_median": (None, 3),
 }
 
 def load_results(metrics_dir, prefix="results"):

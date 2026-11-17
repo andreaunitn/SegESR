@@ -195,7 +195,7 @@ Nobody measures the **excess of generated high-frequency energy** of diffusion S
 
 | Step | Goal | Status |
 |---|---|---|
-| H.0a | V.1 metrics on DIV2K (sharp GT): does the excess of generated energy hold, or is it due to soft RealSR/DRealSR GTs? | doing |
-| H.0b | Controlled test (`data_tools/band_scale.py`, `cluster/band_scale.sh`): scale the frequencies above the LR Nyquist of SeeSR outputs (×0, 0.25, 0.5, 1, 1.5, 2, and a per-octave oracle matching the GT energy), then see which metrics reward more generated detail | doing |
+| H.0a | V.1 metrics on DIV2K (sharp GT): does the excess of generated energy hold, or is it due to soft RealSR/DRealSR GTs? **Due to the soft GTs**: on DIV2K SeeSR generates 0.6× the GT energy above the LR Nyquist | done |
+| H.0b | Controlled test (`data_tools/band_scale.py`, `cluster/band_scale.sh`): scale the frequencies above the LR Nyquist of SeeSR outputs (×0, 0.25, 0.5, 1, 1.5, 2, and a per-octave oracle matching the GT energy), then see which metrics reward more generated detail, on soft (RealSR, DRealSR) and sharp (DIV2K) GTs | doing |
 | H.1 | If H.0 confirms: the same measure on more models (SeeSR, OSEDiff, PiSA-SR, SegESR…), then a calibration of the generated detail driven by the LR (post-hoc or in the decoder of V.2) | todo |
 

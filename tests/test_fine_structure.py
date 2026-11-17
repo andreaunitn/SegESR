@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import pytest
 
-from data_tools.fine_structure import BANDS, band_metrics, edge_metrics, image_metrics, main
+from data_tools.fine_structure import BANDS, aggregate, band_metrics, edge_metrics, image_metrics, main
 from data_tools.results_table import load_results
 
 def make_image(size=128, seed=0):
@@ -68,6 +68,19 @@ def test_edge_tolerance():
     assert edge_metrics(shifted, gt, tolerance=2)["edge_f"] > 0.95
     assert edge_metrics(shifted, gt, tolerance=0)["edge_f"] < 0.5
 
+def test_energy_is_aggregated_over_the_dataset():
+    gt = make_image()
+    flat = np.full_like(gt, 0.5)
+    flat_gt = flat + 1e-4 * np.random.default_rng(2).standard_normal(gt.shape)   # almost no detail
+    per_image = [image_metrics(gt.copy(), gt), image_metrics(flat_gt + 0.01, flat_gt)]
+    per_image[1] = {**per_image[1], **band_metrics(flat + 0.02 * np.random.default_rng(3).standard_normal(gt.shape), flat_gt)}
+    results = aggregate(per_image)
+
+    assert np.mean([m["energy_high"] for m in per_image]) > 100     # the per-image mean blows up on the flat image
+    assert results["energy_high"] < 2                                # the ratio of the summed energies does not
+    assert results["energy_high_median"] > 1
+    assert not any(key.startswith("_") for key in results)
+
 def test_main_writes_results_readable_by_results_table(tmp_path):
     gt_dir, sr_dir = tmp_path / "gt", tmp_path / "sr" / "sample00"
     gt_dir.mkdir()
@@ -82,6 +95,6 @@ def test_main_writes_results_readable_by_results_table(tmp_path):
           "--output_dir", str(tmp_path / "metrics")])
 
     saved = json.loads((tmp_path / "metrics" / "Toy" / "finestruct_blurred.json").read_text())
-    assert set(dict(saved["Toy"])) >= {"psnr_high", "energy_high", "edge_f", "edge_psnr"}
+    assert set(dict(saved["Toy"])) >= {"psnr_high", "energy_high", "energy_high_median", "edge_f", "edge_psnr"}
     results = load_results(str(tmp_path / "metrics"), prefix="finestruct")
     assert results["Toy"]["blurred"]["energy_high"] < 1.0

@@ -7,8 +7,10 @@ Frequency bands (octaves of the spatial frequency f, in cycles per pixel; Nyquis
     low [0, 1/16)   midlow [1/16, 1/8)   midhigh [1/8, 1/4)   high [1/4, 1/2]
   psnr_<band>    PSNR of the error restricted to the band. The band MSEs add up to the image MSE (Parseval),
                  so a low psnr_high means a large part of the error is fine detail.
-  energy_<band>  spectral energy of the SR image divided by that of the GT, in the band:
+  energy_<band>  spectral energy of the SR images divided by that of the GT images, in the band, summed over the
+                 dataset (a per-image ratio is dominated by nearly flat images, where the GT energy is tiny):
                  < 1 = detail missing (too smooth), > 1 = more detail than the GT (invented texture or noise).
+  energy_<band>_median   median over the images of the per-image ratio.
 
 Edges (Canny on the 8-bit Y channel, same thresholds for SR and GT):
   edge_f         F-score of SR edges against GT edges, with a matching tolerance of --edge_tolerance pixels.
@@ -67,7 +69,9 @@ def band_metrics(sr, gt):
         band = (freq >= lo) & (freq < hi)
         mse = err_power[band].sum()
         results[f"psnr_{name}"] = 10.0 * np.log10(1.0 / max(mse, 1e-12))
-        results[f"energy_{name}"] = sr_power[band].sum() / max(gt_power[band].sum(), 1e-12)
+        sr_energy, gt_energy = sr_power[band].sum() / n, gt_power[band].sum() / n
+        results[f"energy_{name}"] = sr_energy / max(gt_energy, 1e-12)
+        results[f"_sr_energy_{name}"], results[f"_gt_energy_{name}"] = sr_energy, gt_energy
     return results
 
 def canny(y):
@@ -105,15 +109,31 @@ def image_metrics(sr, gt, edge_tolerance=2):
     return {**band_metrics(sr, gt), **edge_metrics(sr, gt, edge_tolerance)}
 
 def evaluate(sr_dir, gt_dir, edge_tolerance=2):
-    """Average metrics over the images of sr_dir (matched to gt_dir by file name)."""
+    """Metrics over the images of sr_dir (matched to gt_dir by file name): PSNRs and edge metrics are averaged,
+    energy_<band> is the ratio of the summed energies, energy_<band>_median the median of the per-image ratios."""
 
     names = sorted(name for name in os.listdir(sr_dir) if not name.startswith("."))
     if not names:
         raise SystemExit(f"No images in {sr_dir}")
     per_image = [image_metrics(load_y(os.path.join(sr_dir, name)), load_y(os.path.join(gt_dir, name)), edge_tolerance)
                  for name in names]
-    keys = per_image[0].keys()
-    return {key: float(np.nanmean([m[key] for m in per_image])) for key in keys}, len(names)
+    return aggregate(per_image), len(names)
+
+def aggregate(per_image):
+    """Dataset-level metrics from the per-image ones (see evaluate)."""
+
+    values = lambda key: np.array([m[key] for m in per_image], dtype=np.float64)
+    results = {}
+    for key in per_image[0]:
+        if key.startswith("_"):
+            continue
+        if key.startswith("energy_"):
+            band = key[len("energy_"):]
+            results[key] = float(values(f"_sr_energy_{band}").sum() / max(values(f"_gt_energy_{band}").sum(), 1e-12))
+            results[f"{key}_median"] = float(np.median(values(key)))
+        else:
+            results[key] = float(np.nanmean(values(key)))
+    return results
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Frequency-band and edge metrics of SR outputs against the GT.")
