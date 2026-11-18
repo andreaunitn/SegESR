@@ -169,3 +169,62 @@ Oracle gains (mean / median over images):
 - **No-reference metrics reward more generated detail on every dataset:** NIQE, CLIPIQA, MUSIQ and MANIQA keep improving up to hf1.5–hf2, whatever the GT's amount of detail.
 - PSNR is always best with little or no generated detail, also on DIV2K: the classic perception-distortion trade-off.
 - **Decision:** a per-image calibration of the generated detail (H.1) is not worth a method. Even with the GT, the gain on sharp GTs is small; a predictor from the LR would recover less.
+
+## Step A.0: where the error in the LR-supported band comes from
+
+Zero-shot SeeSR on RealSR and DRealSR, commit 4ab70a9. Jobs:
+- 1057724 `seesr_g1`, guidance 1 (no CFG), 38 min;
+- 1057725 `seesr_g3`, guidance 3, 35 min;
+- 1057726 `seesr_wavelet`, wavelet color fix (the lowest frequencies come from the bicubic LR), 37 min;
+- 1057727 `seesr_nofix`, no color fix, 37 min;
+- 1057728 `seesr_s3`, 3 seeds per image, 1h28 (its `sample00` gives exactly the `seesr` metrics);
+- 1057729 `cluster/low_band.sh`, 25 min:
+  - seed split (`seedspread_seesr_s3`) and the mean of the seeds (`seesr_s3mean`);
+  - oracles with the band below 1/16 or 1/8 from the GT (`seesr_lowgt16`, `seesr_lowgt8`);
+  - `sample00` with the band below 1/8 from the mean of the seeds (`seesr_s3lowmean8`).
+
+`LOW BAND` is the PSNR of the error below 1/8 cycle per pixel, i.e. low + midlow of `fine_structure.py` (the band MSEs add up).
+
+### RealSR
+| Variant | LOW BAND↑ | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | NIQE↓ | CLIPIQA↑ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| seesr (guidance 5.5, adain) | 29.36 | 25.35 | 0.7246 | 0.3001 | 0.2211 | 125.49 | 5.41 | 0.6644 | 69.49 | 0.5394 |
+| g3 | 29.74 | 25.95 | 0.7445 | 0.2852 | 0.2142 | 123.82 | 5.66 | 0.6318 | 67.42 | 0.5007 |
+| g1 | 30.03 | 26.52 | 0.7606 | 0.2765 | 0.2125 | 124.63 | 6.03 | 0.5583 | 63.87 | 0.4463 |
+| wavelet | 28.08 | 24.27 | 0.7110 | 0.3037 | 0.2245 | 127.18 | 5.30 | 0.6831 | 69.60 | 0.5498 |
+| nofix | 27.85 | 24.16 | 0.7109 | 0.3039 | 0.2251 | 126.85 | 5.32 | 0.6839 | 69.66 | 0.5512 |
+| s3mean | 29.97 | 26.62 | 0.7662 | 0.2760 | 0.2154 | 125.15 | 5.61 | 0.5332 | 65.83 | 0.4516 |
+| s3lowmean8 | 29.97 | 25.60 | 0.7286 | 0.3009 | 0.2204 | 127.96 | 4.98 | 0.6786 | 69.64 | 0.5392 |
+| lowgt16 (oracle) | 31.88 | 26.39 | 0.7306 | 0.2849 | 0.2128 | 109.03 | 5.05 | 0.6503 | 68.88 | 0.5277 |
+| lowgt8 (oracle) | ≈ 49 | 28.11 | 0.7965 | 0.2208 | 0.1932 | 69.61 | 5.25 | 0.5942 | 67.64 | 0.5062 |
+
+### DRealSR
+| Variant | LOW BAND↑ | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | NIQE↓ | CLIPIQA↑ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|---|---|---|
+| seesr (guidance 5.5, adain) | 31.37 | 28.33 | 0.7706 | 0.3164 | 0.2312 | 151.32 | 6.42 | 0.6743 | 65.24 | 0.5047 |
+| g3 | 31.79 | 29.04 | 0.7938 | 0.2963 | 0.2211 | 143.46 | 6.67 | 0.6279 | 61.69 | 0.4587 |
+| g1 | 32.06 | 29.69 | 0.8128 | 0.2847 | 0.2152 | 142.81 | 7.28 | 0.5341 | 55.36 | 0.3855 |
+| wavelet | 30.17 | 27.30 | 0.7525 | 0.3238 | 0.2333 | 151.68 | 6.27 | 0.6931 | 65.40 | 0.5149 |
+| nofix | 29.67 | 26.90 | 0.7522 | 0.3254 | 0.2346 | 151.04 | 6.33 | 0.6919 | 65.58 | 0.5151 |
+| s3mean | 32.16 | 29.69 | 0.8116 | 0.2879 | 0.2219 | 140.69 | 6.77 | 0.5530 | 60.11 | 0.4145 |
+| s3lowmean8 | 32.15 | 28.75 | 0.7748 | 0.3158 | 0.2319 | 148.79 | 5.88 | 0.6830 | 65.22 | 0.5026 |
+| lowgt16 (oracle) | 34.05 | 29.67 | 0.7710 | 0.2873 | 0.2158 | 135.25 | 6.03 | 0.6420 | 64.80 | 0.4862 |
+| lowgt8 (oracle) | ≈ 52 | 32.12 | 0.8280 | 0.2268 | 0.1924 | 94.52 | 5.66 | 0.5785 | 63.48 | 0.4448 |
+
+Seed part of the band error (`seed_share`, 3 seeds):
+
+| Dataset | low | midlow | midhigh | high | below 1/8 |
+|---|---|---|---|---|---|
+| RealSR | 0.10 | 0.26 | 0.39 | 0.73 | ≈ 0.19 |
+| DRealSR | 0.12 | 0.32 | 0.46 | 0.82 | ≈ 0.23 |
+
+**Findings (A.0):**
+- **Gate A.0 passes, with a small margin.** Two settings without the GT gain more than +0.5 dB below 1/8 on both datasets, with LPIPS no worse:
+  - guidance 1: +0.67 / +0.69 dB;
+  - the band below 1/8 from the mean of 3 seeds: +0.61 / +0.78 dB.
+- **Guidance moves the LR-supported band.** Without CFG, PSNR rises by 1.17 / 1.36 dB and LPIPS improves, but the no-reference metrics drop (MUSIQ −5.6 / −9.9): the fine detail goes too.
+- **The mean of the seeds only improves fidelity.** Taking the band below 1/8 from it keeps MUSIQ, MANIQA and LPIPS, at 3× the inference time.
+- **About 80% of the error below 1/8 is systematic**; the seed accounts for about 20%. The higher the band, the larger the seed part.
+- **The oracle shows a large headroom:** +2.76 / +3.79 dB and LPIPS 0.30 → 0.22 with the band below 1/8 from the GT.
+- **But the LR's own low band is worse than SeeSR's.** The wavelet color fix, which takes the lowest frequencies from the bicubic LR, loses about 1 dB against adain, which only matches the global color statistics. Part of the oracle headroom is probably not recoverable from the LR: the degradation blur, and the tone differences between the two cameras of RealSR and DRealSR.
+- Next (A.0b): what a frequency-split guidance could give (low band of g1, high band of guidance 5.5), and the band errors of the bicubic LR.

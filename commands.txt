@@ -142,6 +142,7 @@ Do not sync while a job is running if it may restart: the restart would use the 
         TAG=${v%%:*} TEST_ARGS="${v#*:}" DATASETS="RealSR DRealSR" sbatch -J seesr_${v%%:*} cluster/test.sh preset/models/seesr
     done
     sbatch cluster/low_band.sh                    # after them: seed part, low-band oracles and fusion, then metrics
+    sbatch cluster/low_band_proxy.sh              # then: low band of guidance 1 + high band of SeeSR, bicubic LR
     python3 data_tools/results_table.py --prefix seedspread
 
     Interrupted test jobs: submit the same command again; images already generated are skipped.

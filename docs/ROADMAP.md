@@ -54,7 +54,8 @@ Goal: find what moves the LR-supported band during sampling and reduce it withou
 
 | Step | Goal | Status |
 |---|---|---|
-| A.0 | Diagnosis on zero-shot SeeSR (RealSR + DRealSR): guidance 1 / 3 / 5.5; color fix adain / wavelet / none; 3 seeds, split of each band error into a seed part and a systematic part (`data_tools/seed_spread.py`); oracle with the band below 1/16 or 1/8 from the GT and a fusion with the mean of the seeds (`band_scale.py --low_from`, `cluster/low_band.sh`) | doing |
+| A.0 | Diagnosis on zero-shot SeeSR (RealSR + DRealSR): guidance 1 / 3 / 5.5; color fix adain / wavelet / none; 3 seeds, split of each band error into a seed part and a systematic part (`data_tools/seed_spread.py`); oracle with the band below 1/16 or 1/8 from the GT and a fusion with the mean of the seeds (`band_scale.py --low_from`, `cluster/low_band.sh`). **Gate passes with a small margin**: guidance 1 gives +0.67 / +0.69 dB below 1/8, the mean of 3 seeds +0.61 / +0.78; about 80% of the error is systematic | done |
+| A.0b | Before changing the sampler: the band below 1/16 or 1/8 of guidance 1 combined with the band above of guidance 5.5 (what a frequency-split guidance could give), and the band errors of the bicubic LR (`data_tools/bicubic.py`, `cluster/low_band_proxy.sh`). Go on to A.1 if the combination gains at least about 0.6 dB of PSNR and keeps MUSIQ and MANIQA within about 1 point of SeeSR | doing |
 | A.1 | Method chosen by A.0 (see the gate) | todo |
 
 **Gate A.0.** Continue if a realistic setting (no GT) gains at least **+0.5 dB in the band below 1/8** on both RealSR and DRealSR, with LPIPS no worse than +0.005. A.1 depends on the cause:
