@@ -141,7 +141,7 @@ def fixed_validation(files, args):
     for path in files:
         img = transforms.CenterCrop(args.resolution)(Image.open(path).convert("RGB"))
         gt, lq = deg.degrade_process(np.asarray(img) / 255.0, resize_bak=True)
-        items.append((gt.float() * 2 - 1, lq.float() * 2 - 1))
+        items.append((gt.squeeze(0).float() * 2 - 1, lq.squeeze(0).float() * 2 - 1))   # (C, H, W) each
     random.setstate(states[0]), np.random.set_state(states[1]), torch.set_rng_state(states[2])
     return items
 
@@ -267,7 +267,8 @@ def calibrate(model, ns, csd, net_lpips, captions, data, args, device):
             xf = x.float()
             l_lat = s * F.mse_loss(z, (z - g).detach())
             l_pix = s * F.mse_loss(xf, (xf - delta).detach())
-            l_lp = s * net_lpips(xf, gt.float()).mean()
+        with torch.autocast("cuda", enabled=False):   # in fp16 the gradient of LPIPS overflows
+            l_lp = net_lpips(xf, gt.float()).mean()
         g_lat = torch.autograd.grad(l_lat, z, retain_graph=True)[0]
         g_pix = torch.autograd.grad(l_pix, z, retain_graph=True)[0]
         g_x = torch.autograd.grad(l_lp, x)[0]
