@@ -256,3 +256,29 @@ Job 1058128 (commit 97d0dcd), 12 min. It was an ad hoc script with the same tool
 - **In the lowest octave the LR beats SeeSR.** The bicubic LR is 1.9 / 1.2 dB better than SeeSR in [0, 1/16). In [1/16, 1/8) it is blurred (energy 0.2–0.3 of the GT's) and no better.
 - **Adding the bicubic lowest octave raises PSNR but costs perception.** The best combination (g1low8_bic16) gains +0.48 / +0.50 dB. LPIPS gets worse by +0.013 / +0.017, MANIQA by −0.027 / −0.034, and FID by +3.6 / +14.
 - **Conclusion.** Training-free changes give about +0.3–0.5 dB of PSNR at most, and beyond about +0.3 dB they cost perception. The large oracle headroom (+2.8 / +3.8 dB) needs an actual reconstruction of the [1/16, 1/8) band, which the LR holds only blurred.
+
+## Step T.0: low band of SeeSR from regression SR models
+
+Job 1058150 (commit d059fbf), `cluster/regression_fusion.sh`, 33 min. It runs two RRDBNet models trained with an L1 loss on synthetic degradations:
+- RealESRNet_x4plus (Real-ESRGAN degradations);
+- BSRNet (BSRGAN degradations).
+
+Their band below 1/16 or 1/8 replaces SeeSR's (`seesr_<model>low16`, `seesr_<model>low8`). Values are RealSR / DRealSR.
+
+| Variant | PSNR_LOW↑ | PSNR_MIDLOW↑ | PSNR↑ | LPIPS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| seesr | 33.00 / 34.85 | 31.81 / 33.95 | 25.35 / 28.33 | 0.3001 / 0.3164 | 125.49 / 151.32 | 69.49 / 65.24 | 0.5394 / 0.5047 |
+| bicubic (A.0b) | 34.92 / 36.00 | 31.18 / 34.52 | 27.11 / 30.57 | 0.4564 / 0.4608 | 140.84 / 159.44 | 25.81 / 22.59 | 0.2273 / 0.2360 |
+| realesrnet | 31.84 / 33.16 | 32.26 / 34.44 | 26.69 / 29.33 | 0.2880 / 0.3252 | 152.89 / 169.46 | 52.70 / 44.02 | 0.3310 / 0.2918 |
+| bsrnet | 32.83 / 34.02 | 32.99 / 34.96 | 27.27 / 29.91 | 0.2983 / 0.3430 | 157.92 / 170.26 | 53.29 / 42.14 | 0.3273 / 0.2773 |
+| seesr_realesrnetlow16 | 31.93 / 33.17 | 31.80 / 33.95 | 25.12 / 27.86 | 0.3005 / 0.3185 | 130.20 / 156.42 | 68.73 / 63.81 | 0.5246 / 0.4863 |
+| seesr_realesrnetlow8 | 31.89 / 33.20 | 32.33 / 34.47 | 25.24 / 28.02 | 0.2978 / 0.3227 | 136.03 / 170.03 | 68.04 / 62.22 | 0.5094 / 0.4600 |
+| seesr_bsrnetlow16 | 32.88 / 34.01 | 31.84 / 33.99 | 25.36 / 28.13 | 0.2999 / 0.3178 | 126.73 / 154.07 | 68.86 / 64.11 | 0.5240 / 0.4897 |
+| seesr_bsrnetlow8 | 32.87 / 34.04 | 33.04 / 34.97 | 25.63 / 28.42 | 0.3035 / 0.3304 | 139.97 / 176.22 | 68.50 / 62.84 | 0.5115 / 0.4630 |
+
+**Findings (T.0):**
+- **Gate T.0 fails.** The best fusion (BSRNet below 1/8) gains only +0.28 / +0.09 dB. FID gets worse by +14 / +25 and MANIQA by −0.03 / −0.04.
+- **In the lowest octave, the regression models are worse than SeeSR and much worse than the bicubic LR**: 32.8 / 34.0 for BSRNet against 33.0 / 34.9 and 34.9 / 36.0. Their tone and contrast do not match the camera-captured GTs (energy 1.02–1.03).
+- **In [1/16, 1/8), BSRNet is about 1.0–1.2 dB better than SeeSR.** Even the best combination of bands (lowest octave from the bicubic LR, the next from BSRNet, the rest from SeeSR) would give about +0.55 dB in total, computed from the band MSEs.
+- **Fusing bands of different images costs perception** (FID, MANIQA), probably because the structures of the two images do not line up at the cutoff.
+- **Conclusion on RealSR and DRealSR.** Models trained for fidelity do not reach the low band of these GTs much better than SeeSR. Most of the oracle headroom (+2.8 / +3.8 dB) is not reachable from the LR: it comes from the differences between the two cameras (tone, alignment), as the GT softness did in H.0b.
