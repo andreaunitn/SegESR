@@ -282,3 +282,44 @@ Their band below 1/16 or 1/8 replaces SeeSR's (`seesr_<model>low16`, `seesr_<mod
 - **In [1/16, 1/8), BSRNet is about 1.0–1.2 dB better than SeeSR.** Even the best combination of bands (lowest octave from the bicubic LR, the next from BSRNet, the rest from SeeSR) would give about +0.55 dB in total, computed from the band MSEs.
 - **Fusing bands of different images costs perception** (FID, MANIQA), probably because the structures of the two images do not line up at the cutoff.
 - **Conclusion on RealSR and DRealSR.** Models trained for fidelity do not reach the low band of these GTs much better than SeeSR. Most of the oracle headroom (+2.8 / +3.8 dB) is not reachable from the LR: it comes from the differences between the two cameras (tone, alignment), as the GT softness did in H.0b.
+
+### DIV2K (sharp GT, synthetic degradations)
+
+Job 1058160 (commit d059fbf), `NAME=regression_fusion_div2k MODELS=realesrnet DATASETS=DIV2K`, 3h17. A check of the RealSR and DRealSR conclusion on a GT without camera mismatch.
+
+| Variant | PSNR_LOW↑ | PSNR_MIDLOW↑ | PSNR↑ | LPIPS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| seesr | 32.28 | 29.86 | 23.73 | 0.3198 | 26.16 | 68.69 | 0.5041 |
+| realesrnet | 34.32 | 31.93 | 25.91 | 0.4579 | 65.68 | 45.67 | 0.2881 |
+| seesr_realesrnetlow16 | 34.42 | 29.94 | 24.01 | 0.3185 | 28.36 | 67.20 | 0.4871 |
+| seesr_realesrnetlow8 | 34.46 | 31.95 | 24.52 | 0.3252 | 38.40 | 65.21 | 0.4638 |
+
+**Findings (T.0, DIV2K):**
+- **On DIV2K the band below 1/8 is recoverable.** RealESRNet is about 2.0–2.1 dB better than SeeSR in both octaves below 1/8, unlike RealSR and DRealSR. The diffusion model gets this band wrong; it is not missing from the LR.
+- **Gate T.0 still fails.** The fusion below 1/8 gains +0.79 dB (+0.28 below 1/16), under +1.0, and FID gets worse by +12, MUSIQ by −3.5 and MANIQA by −0.04.
+- **Conclusion.** The headroom exists where the GT and the degradation are consistent, but post-hoc fusion of two images costs perception. It must come from a model trained for it: BiBandSR.
+
+## Step O.0: one-step baselines in our protocol
+
+Setup: jobs 1058171 and 1058183, `cluster/setup_bibandsr.sh`. The SD 2.1-base mirror has the same VAE and text encoder as SD 2 base, and both weight files load with `weights_only=True`. Generation: job 1058175 (commit cad3f43, PiSA-SR on RealSR; it then failed on OSEDiff, whose RAM code loaded BERT from a path of the authors) and job 1058184 (commit 3d7bba7, the rest, 2h57). Official test scripts with default settings (`--process_size 512`, PiSA-SR `--default`), outputs resized to 4× the LR size (none needed it), scored like SeeSR. Values are RealSR / DRealSR / DIV2K.
+
+| Model | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| seesr | 25.35 / 28.33 / 23.73 | 0.7246 / 0.7706 / 0.5993 | 0.3001 / 0.3164 / 0.3198 | 0.2211 / 0.2312 / 0.1968 | 125.49 / 151.32 / 26.16 | 69.49 / 65.24 / 68.69 | 0.5394 / 0.5047 / 0.5041 |
+| pisasr | 25.52 / 28.39 / 23.89 | 0.7411 / 0.7801 / 0.6003 | 0.2672 / 0.2960 / 0.2823 | 0.2045 / 0.2169 / 0.1934 | 124.15 / 130.42 / 25.09 | 70.15 / 66.11 / 69.68 | 0.4811 / 0.4857 / 0.4767 |
+| osediff | 25.17 / 28.01 / 23.76 | 0.7331 / 0.7832 / 0.6064 | 0.2921 / 0.2967 / 0.2942 | 0.2129 / 0.2164 / 0.1975 | 123.51 / 135.64 / 26.34 | 69.09 / 64.69 / 67.97 | 0.4711 / 0.4656 / 0.4411 |
+
+PiSA-SR and OSEDiff match the values in their papers (e.g. DIV2K PSNR 23.87 / 23.72, LPIPS 0.2823 / 0.2941).
+
+| Model | PSNR_LOW↑ | PSNR_MIDLOW↑ | PSNR_MIDHIGH↑ | PSNR_HIGH↑ | MSE share below 1/8 |
+|---|---|---|---|---|---|
+| seesr | 33.00 / 34.85 / 32.28 | 31.81 / 33.95 / 29.86 | 29.82 / 33.58 / 28.56 | 32.86 / 37.36 / 30.14 | 43% / 54% / 41% |
+| pisasr | 32.20 / 33.92 / 31.95 | 31.36 / 34.01 / 30.20 | 30.17 / 34.08 / 28.78 | 34.38 / 37.91 / 30.24 | 50% / 59% / 41% |
+| osediff | 31.16 / 32.56 / 30.74 | 31.05 / 33.95 / 30.20 | 30.17 / 34.35 / 28.95 | 34.52 / 38.93 / 30.74 | 54% / 66% / 46% |
+
+The share below 1/8 is computed from the mean band PSNRs, so it is approximate.
+
+**Findings (O.0):**
+- **Gate O.0 passes.** In the one-step models too, 41–66% of the MSE is below the LR Nyquist limit, more than in SeeSR on RealSR and DRealSR.
+- **Both are worse than SeeSR in the lowest octave on every dataset**: PiSA-SR by 0.3–0.9 dB, OSEDiff by 1.5–2.3 dB. Above 1/8 they are better than SeeSR (less generated energy, which the soft GTs reward).
+- **Realistic headroom, from the band MSEs.** Reaching SeeSR's band below 1/8 would give PiSA-SR +0.29 / +0.26 / +0.05 dB and OSEDiff +0.64 / +0.74 / +0.29 dB. Reaching RealESRNet's on DIV2K (T.0) would give +0.71 dB and +0.98 dB. These gains assume the bands above 1/8 stay unchanged.
