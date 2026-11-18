@@ -63,11 +63,19 @@ Environment: `~/venvs/bibandsr` (`requirements-bibandsr.txt`, `cluster/setup_bib
 | Step | Goal | Status |
 |---|---|---|
 | O.0 | PiSA-SR and OSEDiff with their official weights, scored with our protocol on RealSR, DRealSR and DIV2K: metrics, band errors and energy (`data_tools/collect_sr.py`, `cluster/onestep_baselines.sh`). **Gate passes**: 41–66% of the MSE below 1/8; both are worse than SeeSR in the lowest octave on every dataset | done |
-| O.1 | Two identical short fine-tunings from the official PiSA-SR weights, on our data and hardware: the original losses (control) and the split losses. Checkpoints and automatic resubmission past the 1-day limit | todo |
+| O.1 | Two identical short fine-tunings from the official PiSA-SR weights, on our data and hardware: the original losses (control) and the split losses. Checkpoints and automatic resubmission past the 1-day limit (`bibandsr/train.py`, `bibandsr/bands.py`, `cluster/bibandsr_train.sh`) | doing |
 | O.2 | If O.1 shows a gain: the split losses behind flags in a full training; ablations (fidelity split only, realism split only, cutoff 1/16 or 1/8) | todo |
 | O.3 | The same on OSEDiff; comparisons (PiSA-SR, OSEDiff, SeeSR, others); writing | todo |
 
 **Gate O.0.** Go on if, in the one-step models too, the band below 1/8 holds a large part of the error (at least about 30% of the MSE), as in SeeSR.
+
+**Step O.1 in detail.** As in the second stage of the official training, only the semantic LoRA is trained (the pixel LoRA stays frozen), on the LSDIR training subset with the Real-ESRGAN degradations of PiSA-SR, RAM prompts from the GT, the official settings (lr 5e-5, L2 + 2 LPIPS + CSD with CFG 7.5, timesteps 0.02–0.5) and 8 samples per update. The two runs differ only in the losses:
+- **control** (`--loss pisasr`): the official losses, all on every frequency;
+- **split** (`--loss split`): L2 only below 1/8; LPIPS and CSD with their gradient only above 1/8 (stop-gradient on the low band). The latent step of CSD is moved to pixel space through the decoder by a finite difference, high-passed, and scaled so that without the filter its gradient on the latent has the norm of the latent CSD's (calibrated on the first batches).
+
+Both runs first measure, on the same batches, the share of the CSD and LPIPS gradients below 1/8 (`calibration.json`): how much of the realism losses acts on the band the LR determines. During training, 32 held-out crops give PSNR below and above 1/8 and LPIPS (`val.jsonl`); at the end the last checkpoint is scored on RealSR, DRealSR and DIV2K. A short smoke run first measures speed and memory, to set the number of steps.
+
+**Gate O.1.** Go on to O.2 if, against the control at the same step, the split run gains at least **+0.3 dB of PSNR below 1/8** on RealSR, DRealSR and DIV2K and some total PSNR, with LPIPS no worse than +0.005 and MUSIQ and MANIQA within about 1 point (0.01 for MANIQA). If the control alone moves the metrics, the comparison is with the control, not with the official weights.
 
 ## Track A: fidelity in the LR-supported band (analysis done)
 

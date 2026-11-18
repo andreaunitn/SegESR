@@ -150,6 +150,14 @@ Do not sync while a job is running if it may restart: the restart would use the 
     # BiBandSR: environment, official code and weights of the one-step baselines (once), then step O.0
     sbatch cluster/setup_bibandsr.sh              # ~/venvs/bibandsr, preset/external/, preset/models/
     sbatch cluster/onestep_baselines.sh           # PiSA-SR and OSEDiff -> pisasr, osediff (RealSR, DRealSR, DIV2K)
+
+    # Step O.1: fine-tuning of PiSA-SR from its official weights, original losses (control) vs split losses.
+    # Each run resubmits itself past the 1-day limit, then scores its last checkpoint (onestep_baselines.sh).
+    RUN=o1_smoke_pisasr LOSS=pisasr EVAL=0 TRAIN_ARGS="--max_steps 20 --calib_batches 4 --val_count 8 \
+        --val_every 10 --save_every 10 --log_every 5" sbatch cluster/bibandsr_train.sh   # speed and memory check
+    RUN=o1_pisasr LOSS=pisasr sbatch cluster/bibandsr_train.sh
+    RUN=o1_split LOSS=split sbatch cluster/bibandsr_train.sh
+    # Progress: preset/train_output/bibandsr/<run>/{calibration.json,log.jsonl,val.jsonl}
     python3 data_tools/results_table.py --prefix seedspread
 
     Interrupted test jobs: submit the same command again; images already generated are skipped.

@@ -80,11 +80,17 @@ EOF
 
 echo "--- 4/5: Checks"
 in_bibandsr python - <<'EOF'
-import glob, torch, diffusers, peft, transformers
+import glob, torch, diffusers, lpips, peft, transformers
 from diffusers import AutoencoderKL
 from transformers import CLIPTextModel
 
 print(f"torch {torch.__version__} | diffusers {diffusers.__version__} | peft {peft.__version__} | transformers {transformers.__version__}")
+
+# The degradations of the PiSA-SR training (bibandsr/train.py) use basicsr of third_party and OpenCV
+import sys
+sys.path.append("third_party")
+from basicsr.data.degradations import random_mixed_kernels
+print("basicsr degradations: ok")
 
 # The SD 2.1-base mirror: VAE and text encoder should equal those of SD 2 base (only the UNet was fine-tuned)
 for name, cls in (("vae", AutoencoderKL), ("text_encoder", CLIPTextModel)):
@@ -100,6 +106,7 @@ for path in ["preset/models/osediff/osediff.pkl"] + glob.glob("preset/models/pis
 EOF
 
 echo "--- 5/5: Tests"
-in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py
+in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py tests/test_bibandsr_bands.py \
+    tests/test_bibandsr_train.py
 
 echo "Setup complete."
