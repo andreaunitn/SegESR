@@ -2,7 +2,7 @@
 
 Four research directions share Phase 0.
 
-- **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. Open: a trained reconstruction of the [1/16, 1/8) band, or a new direction. See [Track A](#track-a-fidelity-in-the-lr-supported-band-active).
+- **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. Next: a trained reconstruction of the [1/16, 1/8) band, after the feasibility check T.0. See [Track A](#track-a-fidelity-in-the-lr-supported-band-active).
 - **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
 - **Paused: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds. Gate V.1 failed; V.2 was not tried, and PGSR already covers it. See [Track V](#track-v-evidence-aware-decoder-paused).
 - **Stopped: fallback track H.** H.0b shows that the excess of generated detail is mostly a mismatch with the soft GTs of RealSR and DRealSR, so H.1 is dropped. Its analysis of the metrics stays available as supporting material.
@@ -57,6 +57,11 @@ Goal: find what moves the LR-supported band during sampling and reduce it withou
 | A.0 | Diagnosis on zero-shot SeeSR (RealSR + DRealSR): guidance 1 / 3 / 5.5; color fix adain / wavelet / none; 3 seeds, split of each band error into a seed part and a systematic part (`data_tools/seed_spread.py`); oracle with the band below 1/16 or 1/8 from the GT and a fusion with the mean of the seeds (`band_scale.py --low_from`, `cluster/low_band.sh`). **Gate passes with a small margin**: guidance 1 gives +0.67 / +0.69 dB below 1/8, the mean of 3 seeds +0.61 / +0.78; about 80% of the error is systematic | done |
 | A.0b | Before changing the sampler: the band below 1/16 or 1/8 of guidance 1 combined with the band above of guidance 5.5 (what a frequency-split guidance could give), and the band errors of the bicubic LR (`data_tools/bicubic.py`, `cluster/low_band_proxy.sh`). Go on to A.1 if the combination gains at least about 0.6 dB of PSNR and keeps MUSIQ and MANIQA within about 1 point of SeeSR. **Fails**: +0.26 / +0.36 dB; with the lowest octave from the bicubic LR +0.48 / +0.50 dB, but LPIPS, MANIQA and FID get worse | done |
 | A.1 | Training-free method (frequency-split guidance, low band from the seeds or the LR). **Dropped**: at most about +0.3–0.5 dB (A.0b) | dropped |
+| T.0 | Feasibility of a trained reconstruction, without training: the band below 1/16 or 1/8 of SeeSR taken from regression SR models trained with a pixel loss on realistic degradations (RealESRNet_x4plus, BSRNet; `data_tools/regression_sr.py`, `data_tools/rrdbnet.py`, `cluster/regression_fusion.sh`) | doing |
+| T.1a | If T.0 passes: a small restorer trained only on the band below 1/8 (frequency-limited loss), fused with the output of any diffusion model; it cannot change the generated detail above the LR Nyquist limit | todo |
+| T.1b | If T.0 passes: a fidelity loss limited to the band below 1/8 inside the training of SeeSR (on the decoded x0 prediction, on crops to fit 24 GB) | todo |
+
+**Gate T.0.** Go on to T.1 if the fusion with the regression low band gains at least **+1.0 dB** of PSNR on both RealSR and DRealSR, with LPIPS no worse and MUSIQ and MANIQA within about 1 point of SeeSR. Otherwise a model trained for fidelity does not reconstruct that band better than SeeSR, and the oracle headroom is out of reach from the LR: rethink the direction.
 
 **Gate A.0.** Continue if a realistic setting (no GT) gains at least **+0.5 dB in the band below 1/8** on both RealSR and DRealSR, with LPIPS no worse than +0.005. A.1 depends on the cause:
 - **Guidance:** classifier-free guidance applied only above the LR Nyquist limit.
