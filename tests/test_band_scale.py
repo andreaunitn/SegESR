@@ -8,8 +8,8 @@ import cv2
 import numpy as np
 import pytest
 
-from data_tools.band_scale import (band_windows, full_band, high_energy, high_pass, main, oracle_gains, scale_bands,
-                                   scale_high_frequencies)
+from data_tools.band_scale import (band_windows, full_band, high_energy, high_pass, main, oracle_gains, replace_low_band,
+                                   scale_bands, scale_high_frequencies)
 
 CUTOFF = 1 / 8
 
@@ -82,3 +82,30 @@ def test_main_writes_scaled_images(tmp_path):
 
     with pytest.raises(SystemExit):
         main(["--sr_dir", str(tmp_path / "sr"), "--output_dir", str(out_dir)])     # neither --alpha nor --oracle
+
+def test_low_band_replacement():
+    image, source = make_image(seed=0), make_image(seed=1)
+    out = replace_low_band(image, source, CUTOFF)
+    mask = high_pass(image.shape[:2], CUTOFF)
+
+    assert high_energy(out - source, mask == 0.0) < 1e-12 * high_energy(source, mask == 0.0)   # low band from source
+    assert high_energy(out - image, mask == 1.0) < 1e-12 * high_energy(image, mask == 1.0)     # high band kept
+    assert np.allclose(replace_low_band(image, image, CUTOFF), image)
+
+def test_main_low_from(tmp_path):
+    sr_dir, gt_dir = tmp_path / "sr" / "sample00", tmp_path / "gt"
+    sr_dir.mkdir(parents=True)
+    gt_dir.mkdir()
+    sr = (np.clip(make_image(seed=0), 0, 1) * 255).round().astype(np.uint8)
+    gt = (np.clip(make_image(seed=1), 0, 1) * 255).round().astype(np.uint8)
+    cv2.imwrite(str(sr_dir / "img.png"), sr)
+    cv2.imwrite(str(gt_dir / "img.png"), gt)
+
+    main(["--sr_dir", str(tmp_path / "sr"), "--output_dir", str(tmp_path / "out"), "--low_from", str(gt_dir),
+          "--cutoff", "0.0625"])
+    out = cv2.imread(str(tmp_path / "out" / "sample00" / "img.png")).astype(np.float64)
+    low = high_pass(out.shape[:2], 0.0625) == 0.0
+    assert high_energy(out - gt, low) < 0.02 * high_energy(out - sr, low)     # up to the 8-bit rounding
+
+    with pytest.raises(SystemExit):
+        main(["--sr_dir", str(tmp_path / "sr"), "--output_dir", str(tmp_path / "x"), "--alpha", "0", "--low_from", str(gt_dir)])

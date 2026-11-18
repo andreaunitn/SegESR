@@ -1,7 +1,8 @@
 # SegESR roadmap
 
-Three research directions share Phase 0. **None is active: the next direction is still to be chosen.**
+Four research directions share Phase 0.
 
+- **Active: Track A (fidelity in the LR-supported band).** About half of SeeSR's MSE is at frequencies the LR determines. See [Track A](#track-a-fidelity-in-the-lr-supported-band-active).
 - **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
 - **Paused: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds. Gate V.1 failed; V.2 was not tried, and PGSR already covers it. See [Track V](#track-v-evidence-aware-decoder-paused).
 - **Stopped: fallback track H.** H.0b shows that the excess of generated detail is mostly a mismatch with the soft GTs of RealSR and DRealSR, so H.1 is dropped. Its analysis of the metrics stays available as supporting material.
@@ -44,6 +45,22 @@ Status: `todo` · `doing` · `done` · `dropped`
 - Does SegESR clearly beat fine-tuned SeeSR at the same number of steps? **No**: −0.70 dB on RealSR, −1.00 dB on DRealSR, worse LPIPS, DISTS and FID.
 - Does the SAM 2 refresh help? **No** measurable difference.
 - Where does the README's +2.22 dB come from (dataset, protocol)? Still open (step 0.3): it does not hold on RealSR and DRealSR.
+
+## Track A: fidelity in the LR-supported band (active)
+
+For ×4 SR, the frequencies below 1/8 cycle per HR pixel are determined by the LR. The band PSNRs of V.1 put about 43% (RealSR), 54% (DRealSR) and 41% (DIV2K) of SeeSR's MSE there, and 15–24% in the lowest octave [0, 1/16) alone. The VAE reconstructs these bands almost exactly (47–50 dB in the lowest one), so the error comes from sampling. SegESR and fine-tuned SeeSR lose fidelity mostly there too.
+
+Goal: find what moves the LR-supported band during sampling and reduce it without training, for any model, without knowing the degradation. Related: FiDeSR (CVPR'26: low-frequency consistency in one-step models, with training); ILVR and DDNM (low band from the LR, with a known degradation); the wavelet color fix of StableSR.
+
+| Step | Goal | Status |
+|---|---|---|
+| A.0 | Diagnosis on zero-shot SeeSR (RealSR + DRealSR): guidance 1 / 3 / 5.5; color fix adain / wavelet / none; 3 seeds, split of each band error into a seed part and a systematic part (`data_tools/seed_spread.py`); oracle with the band below 1/16 or 1/8 from the GT and a fusion with the mean of the seeds (`band_scale.py --low_from`, `cluster/low_band.sh`) | doing |
+| A.1 | Method chosen by A.0 (see the gate) | todo |
+
+**Gate A.0.** Continue if a realistic setting (no GT) gains at least **+0.5 dB in the band below 1/8** on both RealSR and DRealSR, with LPIPS no worse than +0.005. A.1 depends on the cause:
+- **Guidance:** classifier-free guidance applied only above the LR Nyquist limit.
+- **Seed:** a seed part of the low-band error of at least about 30% calls for a consistency step on the low band during sampling, without a known degradation.
+- **Neither, and the oracle gain is large:** the degradation blur, i.e. degradation estimation. Stop: crowded field.
 
 ## Segmentation track (on hold)
 

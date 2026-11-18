@@ -10,6 +10,10 @@ every SR image by a factor alpha, with a smooth transition around f_c, and saves
   alpha > 1      even more generated detail
   --oracle       per image and per octave above f_c ([f_c, 2 f_c) and [2 f_c, Nyquist]), the factor that makes the
                  energy equal to the GT's (needs --gt_dir): what a perfect calibration of the generated detail gives
+  --low_from D   the frequencies *below* the cutoff are taken from the same-named images of folder D, those above
+                 are kept: with the GT, what a perfect fidelity in the LR-supported band gives; with another
+                 output (e.g. the mean of several seeds, data_tools/seed_spread.py), a realistic fusion
+--cutoff overrides f_c (cycles per HR pixel), e.g. 0.0625 for the lowest octave only.
 
 Scoring the outputs with data_tools/metrics.py and data_tools/fine_structure.py shows which metrics reward
 generated detail beyond the GT's amount.
@@ -17,7 +21,9 @@ generated detail beyond the GT's amount.
 Usage:
     python data_tools/band_scale.py --sr_dir preset/datasets/output/seesr/RealSR \
         --output_dir preset/datasets/output/seesr_hf0.5/RealSR --alpha 0.5
-On the cluster: sbatch cluster/band_scale.sh (every alpha, then the metrics).
+    python data_tools/band_scale.py --sr_dir preset/datasets/output/seesr/RealSR \
+        --output_dir preset/datasets/output/seesr_lowgt8/RealSR --low_from preset/datasets/test_datasets/RealSR/test_HR
+On the cluster: sbatch cluster/band_scale.sh (every alpha, then the metrics); cluster/low_band.sh (--low_from).
 """
 
 import argparse
@@ -56,6 +62,16 @@ def scale_high_frequencies(image, alpha, cutoff, width=0.1):
     gain = 1.0 + (alpha - 1.0) * mask
     out = np.real(np.fft.ifft2(spectrum * gain[..., None], axes=(0, 1)))
     return np.clip(out, 0.0, 1.0)
+
+def replace_low_band(image, source, cutoff, width=0.1):
+    """The frequencies of `image` below `cutoff` replaced by those of `source` (same shape), with the smooth transition
+    of `high_pass`; returns the result clipped to [0, 1]."""
+
+    if image.shape != source.shape:
+        raise ValueError(f"Image shapes are different: {image.shape}, {source.shape}")
+    mask = high_pass(image.shape[:2], cutoff, width)[..., None]
+    spectrum = np.fft.fft2(image, axes=(0, 1)) * mask + np.fft.fft2(source, axes=(0, 1)) * (1.0 - mask)
+    return np.clip(np.real(np.fft.ifft2(spectrum, axes=(0, 1))), 0.0, 1.0)
 
 def band_windows(shape, cutoff, width=0.1):
     """Smooth windows of the two octaves above the cutoff, [cutoff, 2 cutoff) and [2 cutoff, Nyquist]; they add up to
@@ -101,17 +117,19 @@ def parse_args(argv=None):
     parser.add_argument("--alpha", type=float, default=None, help="Factor on the frequencies above the cutoff.")
     parser.add_argument("--oracle", action="store_true", help="Per-image alpha matching the GT energy above the cutoff.")
     parser.add_argument("--gt_dir", default=None, help="GT folder, needed by --oracle.")
+    parser.add_argument("--low_from", default=None, help="Folder of images whose frequencies below the cutoff replace the SR's.")
     parser.add_argument("--scale", type=int, default=4, help="SR factor: the cutoff is 1 / (2 * scale).")
+    parser.add_argument("--cutoff", type=float, default=None, help="Cutoff in cycles per pixel (default: 1 / (2 * scale)).")
     return parser.parse_args(argv)
 
 def main(argv=None):
     args = parse_args(argv)
-    if args.oracle == (args.alpha is not None):
-        raise SystemExit("Give exactly one of --alpha and --oracle.")
+    if sum([args.alpha is not None, args.oracle, args.low_from is not None]) != 1:
+        raise SystemExit("Give exactly one of --alpha, --oracle and --low_from.")
     if args.oracle and not args.gt_dir:
         raise SystemExit("--oracle needs --gt_dir.")
 
-    cutoff = 1.0 / (2 * args.scale)
+    cutoff = args.cutoff if args.cutoff is not None else 1.0 / (2 * args.scale)
     sr_dir = os.path.join(args.sr_dir, args.sample)
     out_dir = os.path.join(args.output_dir, args.sample)
     os.makedirs(out_dir, exist_ok=True)
@@ -124,11 +142,13 @@ def main(argv=None):
             gains = oracle_gains(sr, read(os.path.join(args.gt_dir, name)), cutoff)
             all_gains.append(gains)
             out = scale_bands(sr, gains, cutoff)
+        elif args.low_from:
+            out = replace_low_band(sr, read(os.path.join(args.low_from, name)), cutoff)
         else:
             out = scale_high_frequencies(sr, args.alpha, cutoff)
         write(os.path.join(out_dir, name), out)
 
-    label = "oracle" if args.oracle else f"alpha={args.alpha}"
+    label = "oracle" if args.oracle else f"low band from {args.low_from}" if args.low_from else f"alpha={args.alpha}"
     print(f"{label}: {len(names)} images from {sr_dir} -> {out_dir} (cutoff {cutoff:.4f} cycles/pixel)")
     if args.oracle:
         for octave, values in zip(("[f_c, 2 f_c)", "[2 f_c, Nyquist]"), np.array(all_gains).T):

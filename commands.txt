@@ -136,6 +136,14 @@ Do not sync while a job is running if it may restart: the restart would use the 
     sbatch cluster/fine_structure.sh              # -> metrics/<dataset>/finestruct_<name>.json
     python3 data_tools/results_table.py --prefix finestruct
 
+    # Step A.0: where the error in the LR-supported band comes from (zero-shot SeeSR, RealSR + DRealSR)
+    for v in "g1:--guidance_scale 1" "g3:--guidance_scale 3" "wavelet:--align_method wavelet" \
+             "nofix:--align_method nofix" "s3:--sample_times 3"; do
+        TAG=${v%%:*} TEST_ARGS="${v#*:}" DATASETS="RealSR DRealSR" sbatch -J seesr_${v%%:*} cluster/test.sh preset/models/seesr
+    done
+    sbatch cluster/low_band.sh                    # after them: seed part, low-band oracles and fusion, then metrics
+    python3 data_tools/results_table.py --prefix seedspread
+
     Interrupted test jobs: submit the same command again; images already generated are skipped.
     Outputs:  preset/datasets/output/<run>_<checkpoint>/<dataset>/sample00/
     Metrics:  metrics/<dataset>/results_<run>_<checkpoint>.json
