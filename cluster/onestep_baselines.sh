@@ -54,7 +54,10 @@ for dataset in "${datasets[@]}"; do
     for model in "${models[@]}"; do
         out_dir="$OUTPUT_DIR/$model/$dataset"
         n_lr=$(find "$data_dir/test_LR" -maxdepth 1 -type f | wc -l)
-        n_out=$(find "$out_dir/sample00" -maxdepth 1 -name "*.png" 2>/dev/null | wc -l)
+        n_out=0     # find fails on a missing folder, which would end the script (set -e with pipefail)
+        if [ -d "$out_dir/sample00" ]; then
+            n_out=$(find "$out_dir/sample00" -maxdepth 1 -name "*.png" | wc -l)
+        fi
         if [ "$n_out" -eq "$n_lr" ]; then
             echo "## $model on $dataset: outputs already collected"
         else
