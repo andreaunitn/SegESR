@@ -54,6 +54,12 @@ fetch_repo() {   # fetch_repo <name> <github owner/repo> <commit>
 }
 fetch_repo PiSA-SR csslc/PiSA-SR "$PISASR_COMMIT"
 fetch_repo OSEDiff cswry/OSEDiff "$OSEDIFF_COMMIT"
+# Their RAM code loads the BERT tokenizer from a path of the authors' machine; use the Hub id, as third_party/ram does
+for repo in PiSA-SR OSEDiff; do
+    sed -i "s|BertTokenizer.from_pretrained('/home/notebook/data/group/LowLevelLLM/LLM/bert-base-uncased', local_files_only=True)|BertTokenizer.from_pretrained('bert-base-uncased')|" \
+        "preset/external/$repo/ram/models/utils.py"
+done
+grep -n "BertTokenizer.from_pretrained(" preset/external/*/ram/models/utils.py
 
 echo "--- 3/5: Weights (preset/models)"
 mkdir -p preset/models/osediff preset/models/pisasr
