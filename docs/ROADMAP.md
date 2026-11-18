@@ -1,9 +1,10 @@
 # SegESR roadmap
 
-Two research directions share Phase 0.
+Three research directions share Phase 0. **None is active: the next direction is still to be chosen.**
 
-- **Active: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds, plus an analysis of how much of the SR error comes from the VAE. See [Track V](#track-v-evidence-aware-decoder-active). Stop criteria and the fallback track H are at the end of the file.
-- **On hold: the segmentation track (Phases 1–5 below).**
+- **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
+- **Paused: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds. Gate V.1 failed; V.2 was not tried, and PGSR already covers it. See [Track V](#track-v-evidence-aware-decoder-paused).
+- **Stopped: fallback track H.** H.0b shows that the excess of generated detail is mostly a mismatch with the soft GTs of RealSR and DRealSR, so H.1 is dropped. Its analysis of the metrics stays available as supporting material.
 
 ## How we work
 
@@ -34,15 +35,15 @@ Status: `todo` · `doing` · `done` · `dropped`
 
 | Step | Goal | Status |
 |---|---|---|
-| 0.1 | Test SegESR (with and without SAM 2 refresh) and fine-tuned SeeSR at `checkpoint-15000` on RealSR + DRealSR | doing |
+| 0.1 | Test SegESR (with and without SAM 2 refresh) and fine-tuned SeeSR at `checkpoint-15000` on RealSR + DRealSR | done |
 | 0.2 | Script that collects all `metrics/*/results_*.json` into one table (`data_tools/results_table.py`) | done |
 | 0.3 | Align with the SRSR protocol: zero-shot SeeSR must give 25.18 dB on RealSR | todo |
 | 0.4 | Runtime per image in `test.py` (only measurable during generation), plus TOPIQ and LIQE in `metrics.py` (already in pyiqa 0.1.13). A-FINE needs a newer pyiqa: added before the final comparisons, recomputing every metric with the same version | todo |
 
 **Gate 0:**
-- Does SegESR clearly beat fine-tuned SeeSR at the same number of steps?
-- Does the SAM 2 refresh help?
-- Where does the README's +2.22 dB come from (dataset, protocol)?
+- Does SegESR clearly beat fine-tuned SeeSR at the same number of steps? **No**: −0.70 dB on RealSR, −1.00 dB on DRealSR, worse LPIPS, DISTS and FID.
+- Does the SAM 2 refresh help? **No** measurable difference.
+- Where does the README's +2.22 dB come from (dataset, protocol)? Still open (step 0.3): it does not hold on RealSR and DRealSR.
 
 ## Segmentation track (on hold)
 
@@ -118,7 +119,7 @@ Ablations for 5.2:
 - SAM loss against CLIP and DINO losses;
 - reliability weights against SAMSR, SRSR and global (InstantIR) weights.
 
-## Track V: evidence-aware decoder (active)
+## Track V: evidence-aware decoder (paused)
 
 The SD VAE compresses by 8× and loses fine structures (small text, thin lines, textures). No diffusion prior can recover them (TVT, ICCV'25). What already exists:
 
@@ -137,15 +138,16 @@ The SD VAE compresses by 8× and loses fine structures (small text, thin lines, 
 
 | Step | Goal | Status |
 |---|---|---|
-| V.0 | VAE ceiling on RealSR and DRealSR: decoder(encoder(GT)) and decoder(best latent), scored like SR outputs (`data_tools/vae_ceiling.py`, `cluster/vae_ceiling.sh`). Compare with the SeeSR and SegESR outputs | doing |
+| V.0 | VAE ceiling on RealSR and DRealSR: decoder(encoder(GT)) and decoder(best latent), scored like SR outputs (`data_tools/vae_ceiling.py`, `cluster/vae_ceiling.sh`). Compare with the SeeSR and SegESR outputs. **The best latent reaches 39.2 / 43.2 dB** | done |
 | V.1 | Fine-structure benchmark: error per frequency band, edge F-score, OCR on small text (as PGSR, TextOCR). Bands and edges: `data_tools/fine_structure.py`, `cluster/fine_structure.sh`. **Bands and edges fail the gate** (VAE share of the error 9–13%); OCR postponed | done |
 | V.2 | Baseline decoder adapter: LR features injected uniformly into the frozen SD VAE decoder (CFW- and PGSR-like), trained on latents of a frozen SR model | todo |
 | V.3 | Evidence-aware gating: a per-pixel gate predicted from the LR (how informative it is locally), with a global scale for inference-time control | todo |
 | V.4 | Plug-in test: the same decoder on other frozen models (SeeSR, SegESR, OSEDiff, PiSA-SR), with and without light fine-tuning | todo |
 | V.5 | Baselines (StableSR CFW, GuideSR, TVT, PGSR on SD 2 if its code allows), ablations, writing | todo |
 
-**Gate V.0 (decoder(encoder(GT)) done, best latent running).**
+**Gate V.0 (done).**
 - The VAE reconstruction of the GT reaches 35.39 dB / LPIPS 0.0365 on RealSR and 39.78 dB / 0.0335 on DRealSR.
+- With the best latent the decoder reaches 39.23 dB on RealSR and 43.24 dB on DRealSR.
 - Every SR model is at 24–28 dB.
 - On whole images, the VAE explains only a small part of the error (about 7–10% of the MSE). Most of it comes from the latent estimated by the diffusion model.
 - So "the VAE loses details" is a weak motivation on average. The track continues only if one of the two gates below passes.
@@ -191,11 +193,11 @@ Before starting it: a targeted literature check on uncertainty and conformal pre
 
 Nobody measures the **excess of generated high-frequency energy** of diffusion SR models against the GT, or checks which metrics reward it.
 
-**Key fact.** For ×4 SR the LR holds frequencies only below 1/8 cycle per HR pixel, so everything above it is generated. V.1 shows the models generate 6–12× the GT's energy in the highest octave, more after fine-tuning and with SegESR.
+**Key fact.** For ×4 SR the LR holds frequencies only below 1/8 cycle per HR pixel, so everything above it is generated. On RealSR and DRealSR the models generate 4.5–10× the GT's energy in the highest octave, more after fine-tuning and with SegESR. On DIV2K, whose GT is sharp, SeeSR generates 0.6× (H.0a).
 
 | Step | Goal | Status |
 |---|---|---|
 | H.0a | V.1 metrics on DIV2K (sharp GT): does the excess of generated energy hold, or is it due to soft RealSR/DRealSR GTs? **Due to the soft GTs**: on DIV2K SeeSR generates 0.6× the GT energy above the LR Nyquist | done |
-| H.0b | Controlled test (`data_tools/band_scale.py`, `cluster/band_scale.sh`): scale the frequencies above the LR Nyquist of SeeSR outputs (×0, 0.25, 0.5, 1, 1.5, 2, and a per-octave oracle matching the GT energy), then see which metrics reward more generated detail, on soft (RealSR, DRealSR) and sharp (DIV2K) GTs | doing |
-| H.1 | If H.0 confirms: the same measure on more models (SeeSR, OSEDiff, PiSA-SR, SegESR…), then a calibration of the generated detail driven by the LR (post-hoc or in the decoder of V.2) | todo |
+| H.0b | Controlled test (`data_tools/band_scale.py`, `cluster/band_scale.sh`): scale the frequencies above the LR Nyquist of SeeSR outputs (×0, 0.25, 0.5, 1, 1.5, 2, and a per-octave oracle matching the GT energy), then see which metrics reward more generated detail, on soft (RealSR, DRealSR) and sharp (DIV2K) GTs. **The oracle gives +0.8 dB and LPIPS −0.07 on soft GTs, but only LPIPS −0.017 at −0.18 dB on DIV2K; no-reference metrics reward more detail everywhere** | done |
+| H.1 | If H.0 confirms: the same measure on more models (SeeSR, OSEDiff, PiSA-SR, SegESR…), then a calibration of the generated detail driven by the LR (post-hoc or in the decoder of V.2). **Dropped**: even the oracle gains little on sharp GTs | dropped |
 
