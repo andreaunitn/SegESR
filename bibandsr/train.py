@@ -65,8 +65,8 @@ def parse_args(argv=None):
     p.add_argument("--init_weights", default="preset/models/pisasr/pisa_sr.pkl")
     p.add_argument("--sd_path", default="preset/models/stable-diffusion-2-1-base")
     p.add_argument("--ram_path", default="preset/models/ram_swin_large_14m.pth")
-    p.add_argument("--deg_file", default=str(PISASR_DIR / "src" / "datasets" / "params.yml"),
-                   help="Degradation settings (Real-ESRGAN pipeline of PiSA-SR).")
+    p.add_argument("--deg_file", default="params.yml",
+                   help="Degradation settings of PiSA-SR: a file name in its src/datasets folder, where it looks.")
     p.add_argument("--resolution", type=int, default=512)
     p.add_argument("--max_steps", type=int, default=2000, help="Optimizer steps.")
     p.add_argument("--batch_size", type=int, default=1)
