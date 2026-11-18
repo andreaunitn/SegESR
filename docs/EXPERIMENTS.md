@@ -226,5 +226,33 @@ Seed part of the band error (`seed_share`, 3 seeds):
 - **The mean of the seeds only improves fidelity.** Taking the band below 1/8 from it keeps MUSIQ, MANIQA and LPIPS, at 3× the inference time.
 - **About 80% of the error below 1/8 is systematic**; the seed accounts for about 20%. The higher the band, the larger the seed part.
 - **The oracle shows a large headroom:** +2.76 / +3.79 dB and LPIPS 0.30 → 0.22 with the band below 1/8 from the GT.
-- **But the LR's own low band is worse than SeeSR's.** The wavelet color fix, which takes the lowest frequencies from the bicubic LR, loses about 1 dB against adain, which only matches the global color statistics. Part of the oracle headroom is probably not recoverable from the LR: the degradation blur, and the tone differences between the two cameras of RealSR and DRealSR.
+- **[Corrected by A.0b]** The wavelet color fix loses about 1 dB against adain, and its lowest band is about as bad as without color fix. This was first read as "the LR's own low band is worse than SeeSR's". The bicubic LR of A.0b shows the opposite: the wavelet color fix is simply ineffective here.
 - Next (A.0b): what a frequency-split guidance could give (low band of g1, high band of guidance 5.5), and the band errors of the bicubic LR.
+
+## Step A.0b: frequency-split guidance and the bicubic LR
+
+Job 1058080 (commit 97d0dcd), `cluster/low_band_proxy.sh`, 17 min:
+- `seesr_g1low16` and `seesr_g1low8`: the band below 1/16 or 1/8 of SeeSR taken from the output without guidance;
+- `bicubic`: the LR upsampled with bicubic interpolation.
+
+Job 1058128 (commit 97d0dcd), 12 min. It was an ad hoc script with the same tools, `band_scale.py --low_from preset/datasets/output/bicubic/<dataset>/sample00 --cutoff 0.0625`, then `metrics.py` and `fine_structure.py`. It produced:
+- `seesr_bic16`: the band below 1/16 of SeeSR from the bicubic LR;
+- `seesr_g1low8_bic16`: the same on `seesr_g1low8`.
+
+`LOW BAND` is the PSNR of the error below 1/8, as in A.0. Values are RealSR / DRealSR.
+
+| Variant | PSNR_LOW↑ | PSNR_MIDLOW↑ | LOW BAND↑ | PSNR↑ | LPIPS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|---|
+| seesr | 33.00 / 34.85 | 31.81 / 33.95 | 29.36 / 31.37 | 25.35 / 28.33 | 0.3001 / 0.3164 | 125.49 / 151.32 | 69.49 / 65.24 | 0.5394 / 0.5047 |
+| bicubic | 34.92 / 36.00 | 31.18 / 34.52 | 29.65 / 32.19 | 27.11 / 30.57 | 0.4564 / 0.4608 | 140.84 / 159.44 | 25.81 / 22.59 | 0.2273 / 0.2360 |
+| g1low16 | 33.72 / 35.34 | 31.82 / 33.97 | | 25.48 / 28.45 | 0.2992 / 0.3150 | 121.68 / 150.11 | 69.40 / 64.98 | 0.5373 / 0.5027 |
+| g1low8 | 33.74 / 35.37 | 32.42 / 34.77 | 30.02 / 32.06 | 25.61 / 28.69 | 0.3039 / 0.3195 | 126.61 / 152.33 | 69.47 / 64.68 | 0.5353 / 0.4953 |
+| bic16 | 34.91 / 36.03 | 31.87 / 34.04 | 30.12 / 31.92 | 25.68 / 28.59 | 0.3074 / 0.3286 | 123.81 / 161.04 | 68.79 / 63.61 | 0.5189 / 0.4817 |
+| g1low8_bic16 | 34.94 / 36.05 | 32.47 / 34.83 | 30.52 / 32.39 | 25.83 / 28.83 | 0.3127 / 0.3332 | 129.13 / 165.59 | 68.73 / 63.18 | 0.5129 / 0.4703 |
+| s3lowmean8 (A.0) | 33.27 / 35.28 | 32.71 / 35.03 | 29.97 / 32.15 | 25.60 / 28.75 | 0.3009 / 0.3158 | 127.96 / 148.79 | 69.64 / 65.22 | 0.5392 / 0.5026 |
+
+**Findings (A.0b):**
+- **The A.1 criterion fails.** The low band of guidance 1 combined with the high band of SeeSR keeps its +0.66 / +0.69 dB below 1/8, and the perception is unchanged. But the total PSNR rises only +0.26 / +0.36 dB (criterion: about +0.6). The rest of the +1.2 dB of guidance 1 came from the bands above 1/8, i.e. less generated detail, which soft GTs reward (H.0b).
+- **In the lowest octave the LR beats SeeSR.** The bicubic LR is 1.9 / 1.2 dB better than SeeSR in [0, 1/16). In [1/16, 1/8) it is blurred (energy 0.2–0.3 of the GT's) and no better.
+- **Adding the bicubic lowest octave raises PSNR but costs perception.** The best combination (g1low8_bic16) gains +0.48 / +0.50 dB. LPIPS gets worse by +0.013 / +0.017, MANIQA by −0.027 / −0.034, and FID by +3.6 / +14.
+- **Conclusion.** Training-free changes give about +0.3–0.5 dB of PSNR at most, and beyond about +0.3 dB they cost perception. The large oracle headroom (+2.8 / +3.8 dB) needs an actual reconstruction of the [1/16, 1/8) band, which the LR holds only blurred.
