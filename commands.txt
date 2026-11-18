@@ -146,6 +146,10 @@ Do not sync while a job is running if it may restart: the restart would use the 
 
     # Step T.0: low band of SeeSR from regression SR models (RealESRNet, BSRNet; weights downloaded on first use)
     sbatch cluster/regression_fusion.sh           # -> realesrnet, bsrnet, seesr_<model>low16, seesr_<model>low8
+
+    # BiBandSR: environment, official code and weights of the one-step baselines (once), then step O.0
+    sbatch cluster/setup_bibandsr.sh              # ~/venvs/bibandsr, preset/external/, preset/models/
+    sbatch cluster/onestep_baselines.sh           # PiSA-SR and OSEDiff -> pisasr, osediff (RealSR, DRealSR, DIV2K)
     python3 data_tools/results_table.py --prefix seedspread
 
     Interrupted test jobs: submit the same command again; images already generated are skipped.

@@ -1,8 +1,9 @@
 # SegESR roadmap
 
-Four research directions share Phase 0.
+Five research directions share Phase 0.
 
-- **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. T.0 shows that a model trained for fidelity does not reach that band of the RealSR and DRealSR GTs either; open: the same check on DIV2K (synthetic degradations, sharp GT), or a new direction. See [Track A](#track-a-fidelity-in-the-lr-supported-band-active).
+- **Active: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-active).
+- **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. T.0 shows that a model trained for fidelity does not reach that band of the RealSR and DRealSR GTs either; open: the same check on DIV2K (synthetic degradations, sharp GT), or a new direction. See [Track A](#track-a-fidelity-in-the-lr-supported-band-analysis-done).
 - **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
 - **Paused: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds. Gate V.1 failed; V.2 was not tried, and PGSR already covers it. See [Track V](#track-v-evidence-aware-decoder-paused).
 - **Stopped: fallback track H.** H.0b shows that the excess of generated detail is mostly a mismatch with the soft GTs of RealSR and DRealSR, so H.1 is dropped. Its analysis of the metrics stays available as supporting material.
@@ -46,7 +47,29 @@ Status: `todo` · `doing` · `done` · `dropped`
 - Does the SAM 2 refresh help? **No** measurable difference.
 - Where does the README's +2.22 dB come from (dataset, protocol)? Still open (step 0.3): it does not hold on RealSR and DRealSR.
 
-## Track A: fidelity in the LR-supported band (active)
+## BiBandSR: one-step SR with losses split at the LR Nyquist limit (active)
+
+For ×4 SR the LR holds the spatial frequencies below 1/8 cycle per HR pixel (its Nyquist limit); above it, the content is invented. Our measurements on SeeSR support splitting the losses there:
+- above the limit, 73–82% of the error is variance between seeds, so a pixel loss there only pushes towards the average (blur);
+- about half of the MSE is below the limit (Track A);
+- classifier-free guidance moves the band below the limit (A.0), and distillation losses such as CSD and VSD use it (CFG 7.5).
+
+The model: fidelity losses only below the limit, realism losses (LPIPS, CSD) only above it. In the SD latent the 1/8 cutoff cannot be represented directly (the latent only reaches 1/16 of the HR pixels), so the realism gradient is projected in pixel space through the decoder.
+
+Base: **PiSA-SR** (CVPR'25, Apache-2.0, SD 2.1-base). It already separates fidelity and semantics, but in parameters (a pixel LoRA trained with L2, a semantic LoRA with LPIPS + CSD, both on all frequencies). Its CSD loss needs one frozen UNet only, lighter than the VSD of OSEDiff. **OSEDiff** (Apache-2.0) is a second baseline, inference only.
+
+Environment: `~/venvs/bibandsr` (`requirements-bibandsr.txt`, `cluster/setup_bibandsr.sh`), on the same container: PiSA-SR and OSEDiff need diffusers 0.25 and peft 0.9. Downloaded code and weights go to `preset/` (`preset/external/`, `preset/models/`).
+
+| Step | Goal | Status |
+|---|---|---|
+| O.0 | PiSA-SR and OSEDiff with their official weights, scored with our protocol on RealSR, DRealSR and DIV2K: metrics, band errors and energy (`data_tools/collect_sr.py`, `cluster/onestep_baselines.sh`) | doing |
+| O.1 | Two identical short fine-tunings from the official PiSA-SR weights, on our data and hardware: the original losses (control) and the split losses. Checkpoints and automatic resubmission past the 1-day limit | todo |
+| O.2 | If O.1 shows a gain: the split losses behind flags in a full training; ablations (fidelity split only, realism split only, cutoff 1/16 or 1/8) | todo |
+| O.3 | The same on OSEDiff; comparisons (PiSA-SR, OSEDiff, SeeSR, others); writing | todo |
+
+**Gate O.0.** Go on if, in the one-step models too, the band below 1/8 holds a large part of the error (at least about 30% of the MSE), as in SeeSR.
+
+## Track A: fidelity in the LR-supported band (analysis done)
 
 For ×4 SR, the frequencies below 1/8 cycle per HR pixel are determined by the LR. The band PSNRs of V.1 put about 43% (RealSR), 54% (DRealSR) and 41% (DIV2K) of SeeSR's MSE there, and 15–24% in the lowest octave [0, 1/16) alone. The VAE reconstructs these bands almost exactly (47–50 dB in the lowest one), so the error comes from sampling. SegESR and fine-tuned SeeSR lose fidelity mostly there too.
 

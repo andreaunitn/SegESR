@@ -19,3 +19,11 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 in_container() {
     singularity exec --nv "$SEGESR_SIF" bash -c 'source "$0/bin/activate" && exec "$@"' "$SEGESR_VENV" "$@"
 }
+
+# The BiBandSR environment (cluster/setup_bibandsr.sh): newer diffusers and peft, for the one-step models.
+BIBANDSR_VENV="${BIBANDSR_VENV:-$HOME/venvs/bibandsr}"
+
+# Same as in_container, with the BiBandSR virtual environment active.
+in_bibandsr() {
+    singularity exec --nv "$SEGESR_SIF" bash -c 'source "$0/bin/activate" && exec "$@"' "$BIBANDSR_VENV" "$@"
+}
