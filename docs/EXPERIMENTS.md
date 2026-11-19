@@ -323,3 +323,46 @@ The share below 1/8 is computed from the mean band PSNRs, so it is approximate.
 - **Gate O.0 passes.** In the one-step models too, 41–66% of the MSE is below the LR Nyquist limit, more than in SeeSR on RealSR and DRealSR.
 - **Both are worse than SeeSR in the lowest octave on every dataset**: PiSA-SR by 0.3–0.9 dB, OSEDiff by 1.5–2.3 dB. Above 1/8 they are better than SeeSR (less generated energy, which the soft GTs reward).
 - **Realistic headroom, from the band MSEs.** Reaching SeeSR's band below 1/8 would give PiSA-SR +0.29 / +0.26 / +0.05 dB and OSEDiff +0.64 / +0.74 / +0.29 dB. Reaching RealESRNet's on DIV2K (T.0) would give +0.71 dB and +0.98 dB. These gains assume the bands above 1/8 stay unchanged.
+
+## Step O.1: split losses against the official ones
+
+Smoke run: job 1060321 (about 9.5 s per step, 19.7 GB peak). Training: jobs 1062818 (control, `--loss pisasr`, 4h35) and 1062819 (split, `--loss split`, 4h49), commit 7bc28e2, 2000 steps of 8 samples from the official PiSA-SR weights, semantic LoRA only. Test: jobs 1064749 and 1064920 (step 2000, submitted by the training wrapper) and 1064091 (step 500), `cluster/onestep_baselines.sh`, scored like O.0.
+
+Calibration (first batches, same in both runs): 37% of the CSD gradient and 13% of the LPIPS gradient fall below 1/8; CSD pixel scale 0.66.
+
+Validation on the 32 held-out LSDIR crops (PSNR / PSNR below 1/8 / LPIPS; step 0 is the official model, 24.38 / 27.54 / 0.331):
+
+| Step | control | split |
+|---|---|---|
+| 250 | 25.11 / 27.89 / 0.322 | 25.53 / 28.38 / 0.319 |
+| 500 | 25.11 / 27.87 / 0.323 | 25.47 / 28.37 / 0.318 |
+| 1000 | 24.83 / 27.41 / 0.324 | 25.44 / 28.26 / 0.318 |
+| 1500 | 24.84 / 27.49 / 0.324 | 25.29 / 28.23 / 0.319 |
+| 2000 | 24.93 / 27.65 / 0.325 | 25.39 / 28.31 / 0.323 |
+
+Test sets, values RealSR / DRealSR / DIV2K (`pisasr` is the official model of O.0):
+
+| Model | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| pisasr | 25.52 / 28.39 / 23.89 | 0.7411 / 0.7801 / 0.6003 | 0.2672 / 0.2960 / 0.2823 | 0.2045 / 0.2169 / 0.1934 | 124.15 / 130.42 / 25.09 | 70.15 / 66.11 / 69.68 | 0.4811 / 0.4857 / 0.4767 |
+| o1_pisasr_500 | 26.05 / 28.94 / 24.49 | 0.7575 / 0.7966 / 0.6246 | 0.2454 / 0.2716 / 0.2741 | 0.1901 / 0.1989 / 0.1861 | 117.64 / 125.89 / 23.31 | 66.66 / 62.05 / 65.69 | 0.4178 / 0.4236 / 0.4016 |
+| o1_split_500 | 26.14 / 29.13 / 24.54 | 0.7562 / 0.7973 / 0.6210 | 0.2439 / 0.2717 / 0.2723 | 0.1915 / 0.2005 / 0.1880 | 117.36 / 126.54 / 23.64 | 66.69 / 61.68 / 65.56 | 0.4199 / 0.4245 / 0.4005 |
+| o1_pisasr | 25.96 / 28.87 / 24.45 | 0.7540 / 0.7941 / 0.6234 | 0.2448 / 0.2737 / 0.2746 | 0.1901 / 0.2009 / 0.1866 | 117.24 / 126.42 / 23.54 | 67.37 / 63.05 / 66.88 | 0.4245 / 0.4310 / 0.4162 |
+| o1_split | 26.18 / 29.04 / 24.51 | 0.7526 / 0.7901 / 0.6181 | 0.2379 / 0.2739 / 0.2716 | 0.1878 / 0.2009 / 0.1886 | 113.38 / 119.60 / 23.81 | 66.46 / 61.80 / 65.79 | 0.4166 / 0.4221 / 0.4042 |
+
+| Model | PSNR below 1/8↑ | PSNR_MIDHIGH↑ | PSNR_HIGH↑ | ENERGY_HIGH |
+|---|---|---|---|---|
+| pisasr | 28.75 / 30.95 / 27.98 | 30.17 / 34.08 / 28.78 | 34.38 / 37.91 / 30.24 | 2.705 / 4.875 / 0.588 |
+| o1_pisasr_500 | 29.07 / 31.26 / 28.45 | 30.61 / 34.60 / 29.27 | 36.11 / 39.95 / 31.45 | 1.671 / 2.955 / 0.333 |
+| o1_split_500 | 29.25 / 31.52 / 28.59 | 30.61 / 34.71 / 29.25 | 36.05 / 39.87 / 31.38 | 1.744 / 3.138 / 0.365 |
+| o1_pisasr | 29.01 / 31.19 / 28.41 | 30.53 / 34.55 / 29.25 | 35.94 / 39.82 / 31.35 | 1.755 / 3.071 / 0.358 |
+| o1_split | 29.31 / 31.46 / 28.56 | 30.62 / 34.60 / 29.21 | 36.13 / 39.76 / 31.35 | 1.699 / 3.082 / 0.372 |
+
+PSNR below 1/8 combines the low and midlow band MSEs of `data_tools/fine_structure.py`.
+
+**Findings (O.1):**
+- **Gate O.1 fails.** Split minus control below 1/8: +0.30 / +0.27 / +0.16 dB at step 2000, +0.18 / +0.27 / +0.14 dB at step 500. Total PSNR +0.22 / +0.17 / +0.06 and +0.09 / +0.19 / +0.05 dB.
+- **The gain is real but small.** It has the right sign in all 6 comparisons, LPIPS is never worse, and the bands above 1/8 do not change. At step 500 MUSIQ and MANIQA are equal (within 0.4 and 0.002), so this is already a comparison at the same perceptual quality. At step 2000 MUSIQ drops by about 1 and MANIQA by about 0.01, at the limit of the gate.
+- **The validation crops overstate the effect**: +0.67 dB below 1/8 at step 2000, against +0.16–0.30 on the test sets. They share the training degradations.
+- **The fine-tuning alone moves PiSA-SR towards fidelity.** With the official losses, the control gains +0.4–0.6 dB and better LPIPS, DISTS and FID, but loses 3–4 MUSIQ and about 0.06 MANIQA, and generates about 35–40% less energy above 1/4.
+- **Same ceiling as A.0b and T.0.** A training-free method, a regression model and now a trained loss split all recover at most about +0.3 dB below 1/8 on the test sets.

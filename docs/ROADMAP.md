@@ -2,7 +2,8 @@
 
 Five research directions share Phase 0.
 
-- **Active: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-active).
+- **Next direction: under review.** After O.1, every attempt on the band the LR determines (A.0b, T.0, O.1) stops at about +0.3 dB on the test sets.
+- **Stopped: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. Gate O.1 failed: against the control, +0.14–0.30 dB below 1/8 on the test sets (+0.67 dB on the validation crops), with MUSIQ and MANIQA equal at step 500. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-stopped).
 - **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. T.0 shows that a model trained for fidelity does not reach that band of the RealSR and DRealSR GTs either (camera mismatch), but does on DIV2K (synthetic degradations, sharp GT: about +2 dB below 1/8), where the post-hoc fusion still costs perception. Continued, with training, in BiBandSR. See [Track A](#track-a-fidelity-in-the-lr-supported-band-analysis-done).
 - **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
 - **Paused: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds. Gate V.1 failed; V.2 was not tried, and PGSR already covers it. See [Track V](#track-v-evidence-aware-decoder-paused).
@@ -47,7 +48,7 @@ Status: `todo` · `doing` · `done` · `dropped`
 - Does the SAM 2 refresh help? **No** measurable difference.
 - Where does the README's +2.22 dB come from (dataset, protocol)? Still open (step 0.3): it does not hold on RealSR and DRealSR.
 
-## BiBandSR: one-step SR with losses split at the LR Nyquist limit (active)
+## BiBandSR: one-step SR with losses split at the LR Nyquist limit (stopped)
 
 For ×4 SR the LR holds the spatial frequencies below 1/8 cycle per HR pixel (its Nyquist limit); above it, the content is invented. Our measurements on SeeSR support splitting the losses there:
 - above the limit, 73–82% of the error is variance between seeds, so a pixel loss there only pushes towards the average (blur);
@@ -63,9 +64,9 @@ Environment: `~/venvs/bibandsr` (`requirements-bibandsr.txt`, `cluster/setup_bib
 | Step | Goal | Status |
 |---|---|---|
 | O.0 | PiSA-SR and OSEDiff with their official weights, scored with our protocol on RealSR, DRealSR and DIV2K: metrics, band errors and energy (`data_tools/collect_sr.py`, `cluster/onestep_baselines.sh`). **Gate passes**: 41–66% of the MSE below 1/8; both are worse than SeeSR in the lowest octave on every dataset | done |
-| O.1 | Two identical short fine-tunings from the official PiSA-SR weights, on our data and hardware: the original losses (control) and the split losses. Checkpoints and automatic resubmission past the 1-day limit (`bibandsr/train.py`, `bibandsr/bands.py`, `cluster/bibandsr_train.sh`) | doing |
-| O.2 | If O.1 shows a gain: the split losses behind flags in a full training; ablations (fidelity split only, realism split only, cutoff 1/16 or 1/8) | todo |
-| O.3 | The same on OSEDiff; comparisons (PiSA-SR, OSEDiff, SeeSR, others); writing | todo |
+| O.1 | Two identical short fine-tunings from the official PiSA-SR weights, on our data and hardware: the original losses (control) and the split losses. Checkpoints and automatic resubmission past the 1-day limit (`bibandsr/train.py`, `bibandsr/bands.py`, `cluster/bibandsr_train.sh`). **Gate fails**: the split run gains +0.30 / +0.27 / +0.16 dB below 1/8 at step 2000 (MUSIQ about −1, MANIQA about −0.01) and +0.18 / +0.27 / +0.14 dB at step 500 (MUSIQ and MANIQA equal); the control alone moves PiSA-SR towards fidelity (+0.4–0.6 dB, MUSIQ −3 to −4) | done |
+| O.2 | If O.1 shows a gain: the split losses behind flags in a full training; ablations (fidelity split only, realism split only, cutoff 1/16 or 1/8) | dropped |
+| O.3 | The same on OSEDiff; comparisons (PiSA-SR, OSEDiff, SeeSR, others); writing | dropped |
 
 **Gate O.0.** Go on if, in the one-step models too, the band below 1/8 holds a large part of the error (at least about 30% of the MSE), as in SeeSR.
 
@@ -76,6 +77,8 @@ Environment: `~/venvs/bibandsr` (`requirements-bibandsr.txt`, `cluster/setup_bib
 Both runs first measure, on the same batches, the share of the CSD and LPIPS gradients below 1/8 (`calibration.json`): how much of the realism losses acts on the band the LR determines. During training, 32 held-out crops give PSNR below and above 1/8 and LPIPS (`val.jsonl`); at the end the last checkpoint is scored on RealSR, DRealSR and DIV2K. A short smoke run first measures speed and memory, to set the number of steps.
 
 **Gate O.1.** Go on to O.2 if, against the control at the same step, the split run gains at least **+0.3 dB of PSNR below 1/8** on RealSR, DRealSR and DIV2K and some total PSNR, with LPIPS no worse than +0.005 and MUSIQ and MANIQA within about 1 point (0.01 for MANIQA). If the control alone moves the metrics, the comparison is with the control, not with the official weights.
+
+**Result.** Gate O.1 fails. The gain is consistent in sign (6 of 6 comparisons, LPIPS never worse) and sits below 1/8 as designed, but it is about a third of the gain on the validation crops, which share the training degradations. See [EXPERIMENTS.md](EXPERIMENTS.md#step-o1-split-losses-against-the-official-ones).
 
 ## Track A: fidelity in the LR-supported band (analysis done)
 
