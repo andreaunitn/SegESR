@@ -1,7 +1,7 @@
 """
 Collects the metrics written by `data_tools/metrics.py` (metrics/<dataset>/results_<name>.json) into one table
 per dataset, with the best value of each metric marked. With --prefix finestruct it shows the fine-structure
-metrics of `data_tools/fine_structure.py` instead, with --prefix seedspread those of `data_tools/seed_spread.py`.
+metrics of `data_tools/fine_structure.py` instead, with --prefix seedspread those of `archive/track_a/data_tools/seed_spread.py`.
 
 Usage (standard library only, no container needed):
     python3 data_tools/results_table.py                              # every result
@@ -44,7 +44,7 @@ METRICS = {
     "energy_midlow_median": (None, 3),
     "energy_midhigh_median": (None, 3),
     "energy_high_median": (None, 3),
-    # data_tools/seed_spread.py (seedspread_<name>.json); psnr_<band> is listed above
+    # archive/track_a/data_tools/seed_spread.py (seedspread_<name>.json); psnr_<band> is listed above
     "spread_low": (True, 2),
     "spread_midlow": (True, 2),
     "spread_midhigh": (True, 2),

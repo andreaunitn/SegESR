@@ -1,6 +1,6 @@
 # SegESR roadmap
 
-Five research directions share Phase 0.
+Five research directions share Phase 0. The code, models and results of the closed ones are archived: see [ARCHIVE.md](ARCHIVE.md).
 
 - **Next direction: under review.** After O.1, every attempt on the band the LR determines (A.0b, T.0, O.1) stops at about +0.3 dB on the test sets.
 - **Stopped: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. Gate O.1 failed: against the control, +0.14–0.30 dB below 1/8 on the test sets (+0.67 dB on the validation crops), with MUSIQ and MANIQA equal at step 500. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-stopped).

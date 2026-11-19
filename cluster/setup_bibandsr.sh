@@ -86,7 +86,7 @@ from transformers import CLIPTextModel
 
 print(f"torch {torch.__version__} | diffusers {diffusers.__version__} | peft {peft.__version__} | transformers {transformers.__version__}")
 
-# The degradations of the PiSA-SR training (bibandsr/train.py) use basicsr of third_party and OpenCV
+# The degradations of the PiSA-SR training (archive/bibandsr/bibandsr/train.py) use basicsr of third_party and OpenCV
 import sys
 sys.path.append("third_party")
 from basicsr.data.degradations import random_mixed_kernels
@@ -106,7 +106,6 @@ for path in ["preset/models/osediff/osediff.pkl"] + glob.glob("preset/models/pis
 EOF
 
 echo "--- 5/5: Tests"
-in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py tests/test_bibandsr_bands.py \
-    tests/test_bibandsr_train.py
+in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py
 
 echo "Setup complete."

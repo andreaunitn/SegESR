@@ -31,8 +31,8 @@ Usage: hpc <command> [args]
   submit [-d] [VAR=val...] [sbatch options] <script> [script args]
                                 sync, then sbatch the script and open `watch` on the new job
                                 (-d: do not open watch). Examples:
-                                  hpc submit cluster/train.sh configs/train_segesr.yaml
-                                  hpc submit MAX_RESTARTS=0 --gpus=2 cluster/train.sh configs/train_segesr.yaml
+                                  hpc submit cluster/onestep_baselines.sh
+                                  hpc submit -d MODELS=pisasr DATASETS=RealSR cluster/onestep_baselines.sh
   watch [jobid] [seconds]       full-screen view: job state + latest output, refreshed (q to quit)
   log [jobid]                   stream the output live, like tail -f (Ctrl+C to stop watching)
   tail [jobid] [lines]          print the last lines of the output and exit (default 40)

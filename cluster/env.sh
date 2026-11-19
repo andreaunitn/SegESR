@@ -1,6 +1,6 @@
 # Shared settings of the SegESR cluster jobs, sourced by the other cluster/*.sh files.
 # Not a job: do not submit it with sbatch.
-# Every path can be overridden from the environment, e.g. `SEGESR_VENV=~/venvs/other sbatch cluster/train.sh`.
+# Every path can be overridden from the environment, e.g. `SEGESR_VENV=~/venvs/other sbatch cluster/fine_structure.sh`.
 
 CONTAINER_IMAGE="${CONTAINER_IMAGE:-docker://pytorch/pytorch:2.6.0-cuda12.6-cudnn9-devel}"
 SEGESR_SIF="${SEGESR_SIF:-$HOME/containers/pytorch_2.6.0-cuda12.6-cudnn9-devel.sif}"
