@@ -16,7 +16,10 @@ are closed. Their code is in `archive/`, and their models and outputs on the clu
 | `data_tools/results_table.py` | One table per dataset from those files (standard library only) |
 | `data_tools/collect_sr.py` | Brings the outputs of external models to the layout the metrics read |
 | `data_tools/download_data.py` | Test and training datasets, base models |
-| `cluster/onestep_baselines.sh` | PiSA-SR and OSEDiff (official or other weights): generation and metrics on RealSR, DRealSR, DIV2K |
+| `data_tools/oracle_map.py` | Per-tile oracle composite of outputs at several global settings (step M.0) |
+| `data_tools/curve_gap.py` | Gap of a model from the curve of global settings at the same perceptual score |
+| `cluster/onestep_baselines.sh` | PiSA-SR, OSEDiff and FreqOrtho-SR (official or other weights, default or several `lambda_sem`): generation and metrics on RealSR, DRealSR, DIV2K |
+| `cluster/oracle_map.sh` | The oracle and its random control, scored |
 | `cluster/fine_structure.sh` | Fine-structure metrics of existing outputs |
 | `cluster/setup_env.sh`, `cluster/setup_bibandsr.sh` | The two environments: the container venv (metrics, and SeeSR) and the PiSA-SR and OSEDiff venv |
 | `cluster/env.sh` | Shared paths and helpers of the jobs |

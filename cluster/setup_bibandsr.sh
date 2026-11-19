@@ -7,10 +7,12 @@
 #
 # One-time setup of BiBandSR: a second virtual environment on the same container as SegESR (~/venvs/bibandsr,
 # requirements-bibandsr.txt), the official code of the one-step baselines and their weights:
-#   preset/external/PiSA-SR, preset/external/OSEDiff   code at a pinned commit (GitHub archives)
+#   preset/external/PiSA-SR, preset/external/OSEDiff,
+#   preset/external/FreqOrtho-SR                         code at a pinned commit (GitHub archives)
 #   preset/models/stable-diffusion-2-1-base             SD 2.1-base, safetensors only (*)
 #   preset/models/pisasr/pisa_sr.pkl                    PiSA-SR weights (Google Drive folder of the authors)
 #   preset/models/osediff/osediff.pkl                   OSEDiff weights (in the OSEDiff repository)
+#   preset/models/freqortho/freqortho_sr.pkl            FreqOrtho-SR weights (Google Drive folder of the authors)
 # (*) The official stabilityai repository is no longer public: the community mirror sd2-community is used. Only
 #     safetensors and configs are downloaded (no pickle), and the VAE and text encoder are compared with the SD 2
 #     base copy in preset/models/stable-diffusion-2-base, which should be identical.
@@ -25,6 +27,8 @@ source cluster/env.sh
 
 PISASR_COMMIT=9c76e12e261d1980148738a0cff41e5e27d18c9f
 OSEDIFF_COMMIT=cdd3b7b04850fa9bb7faf8f2187edd279cc96507
+FREQORTHO_COMMIT=d81826fde0e84646c0c774c3ec6d583669f82210
+FREQORTHO_WEIGHTS_FOLDER="https://drive.google.com/drive/folders/19UrZGeJZBJ5h4omqRmEOLqoTx-Mk36HF"
 PISASR_WEIGHTS_FOLDER="https://drive.google.com/drive/folders/1oLetijWNd59xwJE5oU-eXylQBifxWdss"
 SD21_MIRROR=sd2-community/stable-diffusion-2-1-base
 
@@ -54,6 +58,7 @@ fetch_repo() {   # fetch_repo <name> <github owner/repo> <commit>
 }
 fetch_repo PiSA-SR csslc/PiSA-SR "$PISASR_COMMIT"
 fetch_repo OSEDiff cswry/OSEDiff "$OSEDIFF_COMMIT"
+fetch_repo FreqOrtho-SR sonhm3029/FreqOrtho-SR "$FREQORTHO_COMMIT"   # its RAM code already uses the Hub id
 # Their RAM code loads the BERT tokenizer from a path of the authors' machine; use the Hub id, as third_party/ram does
 for repo in PiSA-SR OSEDiff; do
     sed -i "s|BertTokenizer.from_pretrained('/home/notebook/data/group/LowLevelLLM/LLM/bert-base-uncased', local_files_only=True)|BertTokenizer.from_pretrained('bert-base-uncased')|" \
@@ -62,12 +67,15 @@ done
 grep -n "BertTokenizer.from_pretrained(" preset/external/*/ram/models/utils.py
 
 echo "--- 3/5: Weights (preset/models)"
-mkdir -p preset/models/osediff preset/models/pisasr
+mkdir -p preset/models/osediff preset/models/pisasr preset/models/freqortho
 cp -n preset/external/OSEDiff/preset/models/osediff.pkl preset/models/osediff/
 if [ ! -f preset/models/pisasr/pisa_sr.pkl ]; then
     in_bibandsr gdown --folder "$PISASR_WEIGHTS_FOLDER" -O preset/models/pisasr
 fi
-ls -l preset/models/pisasr preset/models/osediff
+if [ ! -f preset/models/freqortho/freqortho_sr.pkl ]; then
+    in_bibandsr gdown --folder "$FREQORTHO_WEIGHTS_FOLDER" -O preset/models/freqortho
+fi
+ls -l preset/models/pisasr preset/models/osediff preset/models/freqortho
 in_bibandsr python - "$SD21_MIRROR" <<'EOF'
 import sys
 from huggingface_hub import snapshot_download
@@ -100,12 +108,12 @@ for name, cls in (("vae", AutoencoderKL), ("text_encoder", CLIPTextModel)):
     print(f"SD 2.1-base mirror, {name}: {'identical to SD 2 base' if same else 'DIFFERENT from SD 2 base'}")
 
 # The weights must load with the safe loader of torch 2.6 (weights_only=True, the default), as the test scripts do
-for path in ["preset/models/osediff/osediff.pkl"] + glob.glob("preset/models/pisasr/*.pkl"):
+for path in ["preset/models/osediff/osediff.pkl"] + glob.glob("preset/models/pisasr/*.pkl") + glob.glob("preset/models/freqortho/*.pkl"):
     sd = torch.load(path, weights_only=True)
     print(f"{path}: {len(sd)} entries, loaded with weights_only=True")
 EOF
 
 echo "--- 5/5: Tests"
-in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py
+in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py tests/test_oracle_map.py
 
 echo "Setup complete."

@@ -2,7 +2,7 @@
 
 Five research directions share Phase 0. The code, models and results of the closed ones are archived: see [ARCHIVE.md](ARCHIVE.md).
 
-- **Next direction: under review.** After O.1, every attempt on the band the LR determines (A.0b, T.0, O.1) stops at about +0.3 dB on the test sets.
+- **Active: Track M (where to generate).** A one-step model whose fidelity-realism setting varies over the image, from a map predicted from the LR, instead of one global setting. Base: FreqOrtho-SR (ECCV'26). See [Track M](#track-m-spatially-varying-fidelity-realism-setting-active).
 - **Stopped: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. Gate O.1 failed: against the control, +0.14–0.30 dB below 1/8 on the test sets (+0.67 dB on the validation crops), with MUSIQ and MANIQA equal at step 500. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-stopped).
 - **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. T.0 shows that a model trained for fidelity does not reach that band of the RealSR and DRealSR GTs either (camera mismatch), but does on DIV2K (synthetic degradations, sharp GT: about +2 dB below 1/8), where the post-hoc fusion still costs perception. Continued, with training, in BiBandSR. See [Track A](#track-a-fidelity-in-the-lr-supported-band-analysis-done).
 - **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
@@ -47,6 +47,20 @@ Status: `todo` · `doing` · `done` · `dropped`
 - Does SegESR clearly beat fine-tuned SeeSR at the same number of steps? **No**: −0.70 dB on RealSR, −1.00 dB on DRealSR, worse LPIPS, DISTS and FID.
 - Does the SAM 2 refresh help? **No** measurable difference.
 - Where does the README's +2.22 dB come from (dataset, protocol)? Still open (step 0.3): it does not hold on RealSR and DRealSR.
+
+## Track M: spatially varying fidelity-realism setting (active)
+
+The one-step models of 2026 trade fidelity for realism with global settings: PiSA-SR and FreqOrtho-SR scale their semantic branch by one `lambda_sem` for the whole image; IFCSR and TADSR (CVPR'26) name their global control as a limit. Our steps suggest the best setting changes inside an image: where the LR determines the content (structure, text, edges) fidelity pays, where it does not (fine texture) generation does. The closest work, CODSR (CVPR'26), varies the noise per region from a hand-made gradient map fixed at training.
+
+The method, if M.0 passes: a light predictor turns the LR into a map of the semantic strength, applied in the latent of a two-branch model. Base: **FreqOrtho-SR** (ECCV'26, Apache-2.0, SD 2.1-base, built on the PiSA-SR code; pixel and semantic branches, `lambda_pix` and `lambda_sem` at inference). Fallback: PiSA-SR. Code and weights in `preset/external/FreqOrtho-SR` and `preset/models/freqortho` (`cluster/setup_bibandsr.sh`).
+
+| Step | Goal | Status |
+|---|---|---|
+| M.0 | Is there room? FreqOrtho-SR with its default setting and at `lambda_sem` 0, 0.5, 1, 1.5 on RealSR, DRealSR, DIV2K (`cluster/onestep_baselines.sh`, `LAMBDA_SEM`); a per-tile oracle that takes in each 64 or 128-pixel tile the setting closest to the GT, and a control with the same choices at random places (`data_tools/oracle_map.py`, `cluster/oracle_map.sh`); the gap from the curve of the global settings at the same MUSIQ and MANIQA (`data_tools/curve_gap.py`). Inference only | todo |
+| M.1 | A predictor of the map from the LR (no GT), first at the tile level in pixel space; how much of the oracle gap it keeps | todo |
+| M.2 | The map in the latent, trained end to end; comparisons with FreqOrtho-SR, PiSA-SR, CODSR | todo |
+
+**Gate M.0.** First, the default FreqOrtho-SR should be within about 0.3 dB of its paper (26.27 / 29.08 / 24.35 dB). Go on to M.1 if the 64-pixel oracle is above the curve of the global settings by at least **+0.5 dB of PSNR at the same MUSIQ** and +0.3 dB at the same MANIQA on at least 2 of the 3 datasets, and the random control gains less than half of that. A point outside the range of the curve counts as a fail. The oracle chooses with the GT, so its gain is an upper bound; the control shows how much of it comes from where the choice is made.
 
 ## BiBandSR: one-step SR with losses split at the LR Nyquist limit (stopped)
 
