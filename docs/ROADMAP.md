@@ -1,7 +1,8 @@
 # SegESR roadmap
 
-Five research directions share Phase 0. The code, models and results of the closed ones are archived: see [ARCHIVE.md](ARCHIVE.md).
+The research directions below share Phase 0. The code, models and results of the closed ones are archived: see [ARCHIVE.md](ARCHIVE.md).
 
+- **Active: Track R (representation alignment).** A one-step SR model without a prompt extractor: the hidden states of its U-Net, on several differently degraded LRs of one HR, are aligned during training with the DINOv2 features of that HR, and the projection head is dropped at inference. Base: FiDeSR (CVPR'26). See [Track R](#track-r-representation-alignment-in-place-of-the-prompt-extractor-active).
 - **Stopped: Track M (where to generate).** A one-step model whose fidelity-realism setting varies over the image, from a map predicted from the LR, instead of one global setting. Base: FreqOrtho-SR (ECCV'26). Gates M.0 and M.0b failed: a per-tile oracle that sees the GT gains at most +0.3 dB over the global settings at the same MUSIQ, and with a realism budget it falls 0.4–0.75 dB below the default, because the tiles it keeps faithful cost more MUSIQ than they give PSNR. See [Track M](#track-m-spatially-varying-fidelity-realism-setting-stopped).
 - **Stopped: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. Gate O.1 failed: against the control, +0.14–0.30 dB below 1/8 on the test sets (+0.67 dB on the validation crops), with MUSIQ and MANIQA equal at step 500. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-stopped).
 - **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. T.0 shows that a model trained for fidelity does not reach that band of the RealSR and DRealSR GTs either (camera mismatch), but does on DIV2K (synthetic degradations, sharp GT: about +2 dB below 1/8), where the post-hoc fusion still costs perception. Continued, with training, in BiBandSR. See [Track A](#track-a-fidelity-in-the-lr-supported-band-analysis-done).
@@ -47,6 +48,26 @@ Status: `todo` · `doing` · `done` · `dropped`
 - Does SegESR clearly beat fine-tuned SeeSR at the same number of steps? **No**: −0.70 dB on RealSR, −1.00 dB on DRealSR, worse LPIPS, DISTS and FID.
 - Does the SAM 2 refresh help? **No** measurable difference.
 - Where does the README's +2.22 dB come from (dataset, protocol)? Still open (step 0.3): it does not hold on RealSR and DRealSR.
+
+## Track R: representation alignment in place of the prompt extractor (active)
+
+One-step SR models on SD 2.1 (OSEDiff, TADSR, FiDeSR) condition the U-Net on tags from a separate prompt extractor (RAM or DAPE). DAPE (SeeSR) is made robust by aligning its features on the LR with those of RAM on the HR; REPA (ICLR'25) shows, in generation, that aligning the generator's own hidden states with a self-supervised encoder (DINOv2) gives better representations. Track R moves the alignment into the generator and makes it invariant to the degradation: the hidden states of the U-Net on K differently degraded LRs of one HR are all aligned with the DINOv2 features of that HR. The thesis: the prompt extractor is not needed once the generator's representation is aligned. At inference the projection head is dropped, so the model is the base without RAM: fewer parameters, less time. It also targets the cause found in T.0 and H.0b, synthetic training degradations against real camera pairs at test.
+
+Base: **FiDeSR** (CVPR'26, Apache-2.0, SD 2.1-base, training code and weights; RAM tags, DAW-weighted MSE and LPIPS, CSD, LRRB, LFIM at inference). It cannot be retrained from scratch here (200k steps on 2 H100), so every arm is a fine-tuning from its checkpoint with the same steps and data.
+
+Closest work: SeeSR/DAPE (external encoder aligned LR to HR, kept at inference), RCOD (CLIP vision prompt in place of text, kept at inference), GramSR (arXiv 2026, DINOv3 of the LQ as conditioning and a Gram loss on the outputs, one-step SD 2.1), InstanceRSR (ICASSP'26, REPA with DINOv2 of the HR in a multi-step DiT trained from scratch), U-REPA (NeurIPS'25, REPA for U-Nets), Latent Harmony (degradation-invariant VAE latent with DINOv2). None removes the prompt extractor through internal alignment, or aligns several degradations of one HR to one target (search of 2026-11-20).
+
+| Step | Goal | Status |
+|---|---|---|
+| R.0 | Do the premises hold? (a) FiDeSR with RAM tags and with an empty prompt on RealSR, DRealSR, DIV2K: what RAM is worth, and its share of parameters and time. (b) On DIV2K HR crops with LRs at three degradation levels: alignment (CKNNA, as in REPA) of the FiDeSR U-Net features with DINOv2 of the HR, per layer, and its per-image correlation with LPIPS. Inference only | todo |
+| R.1 | Does it work? Fine-tuning from FiDeSR, same steps and data, four arms: A with RAM (control); B without RAM; C without RAM, REPA on one LR; D without RAM, alignment over K = 2 LRs (ours). Layers as U-REPA (middle block, first up block), DINOv2 ViT-B/14, cosine per patch | todo |
+| R.2 | A method for a paper: longer training; ablations on layers, K, λ_align, encoder (DINOv2, DINOv3); comparison with FiDeSR, TADSR, PiSA-SR, OSEDiff, FreqOrtho-SR, and GramSR and RCOD if their code is out; RealLQ250 and RealLR200 too; parameters and time | todo |
+
+**Gate R.0.** Go on to R.1 if the alignment drops by at least 20% (relative) from the mild to the strong degradation, and on at least one layer the per-image alignment correlates with the per-image LPIPS (Spearman ≤ −0.3).
+
+**Gate R.1.** On at least 2 of the 3 datasets: D is not worse than A (PSNR ≥ −0.1 dB, LPIPS ≤ +0.005, MUSIQ ≥ −0.5, MANIQA ≥ −0.01), and D is better than both B and C (LPIPS at least 0.003 lower or MUSIQ at least 0.5 higher, within the tolerances on the other).
+
+**Gate R.2.** D beats FiDeSR in the standard table on at least 2 of the 3 datasets, with fewer parameters and less time.
 
 ## Track M: spatially varying fidelity-realism setting (stopped)
 
