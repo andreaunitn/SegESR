@@ -114,6 +114,6 @@ for path in ["preset/models/osediff/osediff.pkl"] + glob.glob("preset/models/pis
 EOF
 
 echo "--- 5/5: Tests"
-in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py tests/test_oracle_map.py
+in_bibandsr python -m pytest -q -p no:cacheprovider tests/test_collect_sr.py tests/test_curve_gap.py
 
 echo "Setup complete."

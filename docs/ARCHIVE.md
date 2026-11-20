@@ -8,6 +8,7 @@ and logs on the cluster in `preset/archive/<direction>/`. Results and decisions 
 (`archive/track_a/data_tools/seed_spread.py` was `data_tools/seed_spread.py`), but the archived code is not meant
 to run from there. The git tag `pre-archive` is the last commit with everything at its original paths:
 `git worktree add ../SegESR-pre-archive pre-archive` gives a copy where every archived step runs as recorded.
+Track M was archived later: its tag is `pre-archive-m`.
 
 **Reading archived metrics.** `python3 data_tools/results_table.py --metrics_dir preset/archive/<direction>/metrics`
 (add `--prefix finestruct` or `--prefix seedspread` for the other files).
@@ -19,6 +20,7 @@ to run from there. The git tag `pre-archive` is the last commit with everything 
 | Track H (hallucinations) | stopped after H.0b | H.0a, H.0b | `archive/track_h/` | `preset/archive/track_h/` |
 | Track A (LR-supported band), with T.0 | method dropped | A.0, A.0b, T.0 | `archive/track_a/` | `preset/archive/track_a/` |
 | BiBandSR | stopped at gate O.1 | O.0, O.1 | `archive/bibandsr/` | `preset/archive/bibandsr/` |
+| Track M (where to generate) | stopped at gate M.0b | M.0, M.0b | `archive/track_m/` | `preset/archive/track_m/` |
 
 Each data folder has the same layout: `train_output/` (checkpoints), `output/<name>/<dataset>/` (SR images, as in
 `preset/datasets/output/`), `metrics/<dataset>/` (as in `metrics/`), `models/`, `tensorboard/`, `slurm_logs/`.
@@ -27,10 +29,10 @@ Each data folder has the same layout: `train_output/` (checkpoints), `output/<na
 
 These are the reference points of any new direction, so they stay where the active scripts look for them:
 
-- outputs and metrics of zero-shot SeeSR (`seesr`), PiSA-SR (`pisasr`), OSEDiff (`osediff`), bicubic (`bicubic`)
-  and the four O.1 checkpoints (`o1_pisasr`, `o1_split`, `o1_pisasr_500`, `o1_split_500`);
-- the base models in `preset/models/` (SD 2 base, SD 2.1 base, SeeSR, DAPE, RAM, PiSA-SR, OSEDiff);
-- the external code in `preset/external/` (PiSA-SR, OSEDiff) and every dataset in `preset/datasets/`;
+- outputs and metrics of zero-shot SeeSR (`seesr`), PiSA-SR (`pisasr`), OSEDiff (`osediff`), FreqOrtho-SR at its
+  default setting (`freqortho`), bicubic (`bicubic`) and the four O.1 checkpoints (`o1_pisasr`, `o1_split`, `o1_pisasr_500`, `o1_split_500`);
+- the base models in `preset/models/` (SD 2 base, SD 2.1 base, SeeSR, DAPE, RAM, PiSA-SR, OSEDiff, FreqOrtho-SR);
+- the external code in `preset/external/` (PiSA-SR, OSEDiff, FreqOrtho-SR) and every dataset in `preset/datasets/`;
 - the logs of setup, downloads, zero-shot SeeSR and O.0.
 
 ## Segmentation (SegESR)
@@ -75,3 +77,15 @@ SegESR (SeeSR with SAM 2 conditions, PAFB blocks and a SAM 2 perceptual loss) an
 - Data: `train_output/bibandsr/` (`o1_pisasr`, `o1_split`, `o1_smoke_split`: checkpoints every 250 steps,
   `val.jsonl`, `calibration.json`, `log.jsonl`, `config.json`); the O.1 logs. The outputs and metrics of the O.1
   checkpoints stay in place.
+
+## Track M (where to generate)
+
+- Code: `data_tools/oracle_map.py`, `cluster/oracle_map.sh`, the tests of the oracle. `data_tools/curve_gap.py` and its
+  tests (`tests/test_curve_gap.py`) stay active: they compare any model with a curve of settings at the same
+  perceptual score. FreqOrtho-SR stays installed (`cluster/setup_bibandsr.sh`, `cluster/onestep_baselines.sh` with
+  `LAMBDA_SEM`).
+- Data: outputs and metrics of `freqortho_ls0`, `freqortho_ls0.5`, `freqortho_ls1`, `freqortho_ls1.5` (M.0 sweep),
+  `freqortho_oracle64`, `freqortho_shuffle64`, `freqortho_oracle128` (M.0), `freqortho_budget64_b0.75`,
+  `freqortho_budget64_b1`, `freqortho_budget64_b1.25` (M.0b); the logs of M.0 and M.0b. The default
+  `freqortho` stays in place.
+

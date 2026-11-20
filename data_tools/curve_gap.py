@@ -1,5 +1,6 @@
 """
-How far a model is from the curve of the global settings of another model, at the same perceptual score (step M.0).
+How far a model is from the curve of the global settings of another model, at the same perceptual score (made for
+step M.0, kept for any comparison at the same perceptual score).
 For each dataset, the curve is made of the results of the --curve names (e.g. one model at several lambda_sem),
 ordered by the --x metric (default MUSIQ) and joined by straight lines. Each --points name is compared with the
 curve at its own x: gap = its --y metric (default PSNR) minus the curve's, so a positive gap means better than the
