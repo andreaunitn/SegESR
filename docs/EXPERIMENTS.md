@@ -366,3 +366,42 @@ PSNR below 1/8 combines the low and midlow band MSEs of `data_tools/fine_structu
 - **The validation crops overstate the effect**: +0.67 dB below 1/8 at step 2000, against +0.16–0.30 on the test sets. They share the training degradations.
 - **The fine-tuning alone moves PiSA-SR towards fidelity.** With the official losses, the control gains +0.4–0.6 dB and better LPIPS, DISTS and FID, but loses 3–4 MUSIQ and about 0.06 MANIQA, and generates about 35–40% less energy above 1/4.
 - **Same ceiling as A.0b and T.0.** A training-free method, a regression model and now a trained loss split all recover at most about +0.3 dB below 1/8 on the test sets.
+
+## Step M.0: room for a spatially varying lambda_sem in FreqOrtho-SR
+
+Jobs 1065316 (default setting, 2h23), 1065317 (`lambda_sem` 0, 0.5, 1, 1.5 with `lambda_pix` at its default, `cluster/onestep_baselines.sh` with `LAMBDA_SEM`, 10h10) and 1065318 (oracle and control, `cluster/oracle_map.sh`), commit f48bc25. Official FreqOrtho-SR weights, scored like O.0. `lambda_sem` = 1 gives the same outputs as the default (equal metrics). Values are RealSR / DRealSR / DIV2K.
+
+| Model | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| freqortho (default) | 26.39 / 29.25 / 24.46 | 0.7500 / 0.7938 / 0.6158 | 0.2551 / 0.2794 / 0.2747 | 0.1956 / 0.2112 / 0.1889 | 110.95 / 127.00 / 23.59 | 69.03 / 65.56 / 68.63 | 0.4532 / 0.4581 / 0.4335 |
+| freqortho_ls0 | 27.77 / 30.94 / 26.01 | 0.7981 / 0.8540 / 0.6780 | 0.2925 / 0.3057 / 0.4736 | 0.2343 / 0.2491 / 0.2845 | 148.65 / 174.95 / 52.84 | 51.04 / 45.29 / 40.43 | 0.3233 / 0.3122 / 0.2619 |
+| freqortho_ls0.5 | 27.59 / 30.68 / 25.80 | 0.7921 / 0.8459 / 0.6711 | 0.2491 / 0.2640 / 0.3640 | 0.2054 / 0.2207 / 0.2380 | 128.28 / 150.31 / 35.62 | 58.33 / 53.18 / 49.56 | 0.3570 / 0.3420 / 0.2882 |
+| freqortho_ls1.5 | 23.86 / 26.17 / 21.51 | 0.6461 / 0.6614 / 0.4956 | 0.3238 / 0.3600 / 0.3431 | 0.2211 / 0.2448 / 0.2234 | 120.16 / 145.05 / 29.42 | 71.38 / 68.01 / 69.53 | 0.4724 / 0.4578 / 0.4267 |
+| freqortho_oracle64 | 27.89 / 31.11 / 26.07 | 0.7996 / 0.8544 / 0.6796 | 0.2787 / 0.2904 / 0.4507 | 0.2209 / 0.2345 / 0.2725 | 142.18 / 166.21 / 49.38 | 53.86 / 49.08 / 43.19 | 0.3431 / 0.3304 / 0.2749 |
+| freqortho_shuffle64 | 27.72 / 30.86 / 25.96 | 0.7971 / 0.8517 / 0.6775 | 0.2784 / 0.2914 / 0.4479 | 0.2182 / 0.2325 / 0.2695 | 141.61 / 165.46 / 48.38 | 54.78 / 49.89 / 44.22 | 0.3467 / 0.3360 / 0.2778 |
+| freqortho_oracle128 | 27.85 / 31.05 / – | 0.7992 / 0.8543 / – | 0.2818 / 0.2937 / – | 0.2254 / 0.2394 / – | 144.24 / 169.00 / – | 53.13 / 48.19 / – | 0.3348 / 0.3234 / – |
+
+PSNR above the curve of `lambda_sem` 0, 0.5, 1, 1.5 at the same perceptual score (`data_tools/curve_gap.py`):
+
+| Model | at the same MUSIQ | at the same MANIQA |
+|---|---|---|
+| freqortho_oracle64 | +0.19 / +0.30 / +0.13 | +0.23 / +0.33 / +0.17 |
+| freqortho_shuffle64 | +0.05 / +0.07 / +0.04 | +0.08 / +0.13 / +0.08 |
+| freqortho_oracle128 | +0.13 / +0.20 / – | +0.14 / +0.21 / – |
+
+Share of the 64-pixel tiles given to each `lambda_sem` by the oracle:
+
+| `lambda_sem` | 0 | 0.5 | 1 | 1.5 |
+|---|---|---|---|---|
+| RealSR | 66% | 29% | 4% | 1% |
+| DRealSR | 66% | 27% | 4% | 2% |
+| DIV2K | 75% | 22% | 3% | 0.5% |
+
+The 128-pixel oracle on DIV2K (80% / 18% / 1% / 0% of the tiles) was not scored: its metrics slowed to about one image a minute, with the process waiting on the NFS mount of node113, and the job was cancelled. It is not needed for the gate.
+
+**Findings (M.0):**
+- **The sanity check passes.** The default is 26.39 / 29.25 / 24.46 dB against 26.27 / 29.08 / 24.35 in the paper.
+- **Gate M.0 fails.** At the same MUSIQ the oracle is +0.13 to +0.30 dB above the curve, against +0.5 required; at the same MANIQA it reaches +0.3 only on DRealSR.
+- **Where the choice is made matters, a little.** The same choices at random places keep a quarter to a third of the gain. Larger tiles gain less (+0.13 / +0.20 at 128 pixels).
+- **The oracle sits at the fidelity end.** By pixel error, `lambda_sem` = 0 wins most tiles, so the oracle lands at MUSIQ 54 / 49 / 43, between `lambda_sem` 0 and 0.5 and 15–25 points below the default. The gate measures it at a setting of no interest. Step M.0b moves the comparison to the default with a realism budget.
+

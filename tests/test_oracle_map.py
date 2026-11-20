@@ -12,7 +12,7 @@ import pytest
 
 from data_tools.curve_gap import curve_value, gaps
 from data_tools.curve_gap import main as gap_main
-from data_tools.oracle_map import blend, luma, main, oracle_choice, tile_errors
+from data_tools.oracle_map import blend, budget_price, luma, main, mean_value, oracle_choice, tile_errors
 
 def make_gt(h=96, w=128, seed=0):
     rng = np.random.default_rng(seed)
@@ -90,6 +90,46 @@ def test_main_rejects_missing_images(tmp_path):
     with pytest.raises(SystemExit):
         main(["--candidates", str(tmp_path / "a"), str(tmp_path / "b"), "--gt_dir", str(tmp_path / "gt"),
               "--output_dir", str(tmp_path / "out")])
+
+def test_price_moves_the_choice_to_higher_values():
+    errors = np.array([[[1.0, 1.0]], [[2.0, 1.5]]])          # candidate 0 better in both tiles, by 1 and by 0.5
+    assert (oracle_choice(errors) == 0).all()
+    assert oracle_choice(errors, price=0.75, values=[0, 1]).tolist() == [[0, 1]]
+    assert (oracle_choice(errors, price=2.0, values=[0, 1]) == 1).all()
+
+def test_budget_price_is_the_smallest_that_reaches_the_budget():
+    rng = np.random.default_rng(5)
+    errors = [rng.random((3, 4, 4)) for _ in range(5)]
+    values = [0, 0.5, 1.5]
+    for budget in (0.3, 0.8, 1.2, 1.5):
+        price = budget_price(errors, values, budget)
+        assert mean_value(errors, values, price) >= budget
+        assert price == 0 or mean_value(errors, values, price * (1 - 1e-6)) < budget
+    with pytest.raises(ValueError):
+        budget_price(errors, values, 2.0)
+
+def test_main_with_budgets(tmp_path):
+    rng = np.random.default_rng(6)
+    gt_dir = tmp_path / "gt"
+    for i in range(3):
+        gt = make_gt(seed=20 + i)
+        a, b = split_candidates(gt, rng)
+        write(gt_dir / f"img{i}.png", gt)
+        write(tmp_path / "a" / "sample00" / f"img{i}.png", a)
+        write(tmp_path / "b" / "sample00" / f"img{i}.png", b)
+
+    for control in ([], ["--control", "shuffle"]):
+        out = tmp_path / ("shuffle" if control else "oracle")
+        main(["--candidates", str(tmp_path / "a"), str(tmp_path / "b"), "--values", "0", "1", "--budgets", "0.5", "1",
+              "--gt_dir", str(gt_dir), "--output_dir", str(out) + "_b{budget}", "--tile", "32", *control])
+        for budget, tag in ((0.5, "0.5"), (1.0, "1")):
+            info = json.loads((tmp_path / f"{out.name}_b{tag}" / "choice.json").read_text())
+            assert info["mean_value"] >= budget and info["budget"] == budget
+            assert len(list((tmp_path / f"{out.name}_b{tag}" / "sample00").glob("*.png"))) == 3
+        assert info["price"] > 0 and info["tile_share"][str(tmp_path / "b")] == 1.0
+    with pytest.raises(SystemExit):
+        main(["--candidates", str(tmp_path / "a"), str(tmp_path / "b"), "--values", "0", "1", "--budgets", "0.5",
+              "--gt_dir", str(gt_dir), "--output_dir", str(tmp_path / "no_placeholder")])
 
 def test_curve_value():
     curve = [(70.0, 25.0), (66.0, 26.0), (68.0, 25.6)]
