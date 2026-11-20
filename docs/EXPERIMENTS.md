@@ -405,3 +405,34 @@ The 128-pixel oracle on DIV2K (80% / 18% / 1% / 0% of the tiles) was not scored:
 - **Where the choice is made matters, a little.** The same choices at random places keep a quarter to a third of the gain. Larger tiles gain less (+0.13 / +0.20 at 128 pixels).
 - **The oracle sits at the fidelity end.** By pixel error, `lambda_sem` = 0 wins most tiles, so the oracle lands at MUSIQ 54 / 49 / 43, between `lambda_sem` 0 and 0.5 and 15–25 points below the default. The gate measures it at a setting of no interest. Step M.0b moves the comparison to the default with a realism budget.
 
+## Step M.0b: the oracle with a realism budget
+
+Job 1065742 (`cluster/oracle_map.sh` with `BUDGETS="0.75 1 1.25"`, `CONTROLS=oracle`, `FINE_STRUCTURE=0`, node113 excluded), commit 46b02aa, from the `lambda_sem` outputs of M.0. The shuffled control (job 1065743) was cancelled while pending, once two datasets had settled the gate. Values are RealSR / DRealSR / DIV2K.
+
+| Model | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| freqortho (default) | 26.39 / 29.25 / 24.46 | 0.7500 / 0.7938 / 0.6158 | 0.2551 / 0.2794 / 0.2747 | 0.1956 / 0.2112 / 0.1889 | 110.95 / 127.00 / 23.59 | 69.03 / 65.56 / 68.63 | 0.4532 / 0.4581 / 0.4335 |
+| oracle, β = 0.75 | 27.50 / 30.46 / 25.58 | 0.7850 / 0.8394 / 0.6618 | 0.2552 / 0.2725 / 0.3497 | 0.1918 / 0.2084 / 0.2217 | 122.26 / 145.24 / 32.81 | 61.11 / 56.52 / 54.03 | 0.3901 / 0.3804 / 0.3230 |
+| oracle, β = 1 | 26.91 / 29.64 / 24.85 | 0.7641 / 0.8133 / 0.6290 | 0.2594 / 0.2873 / 0.3138 | 0.1900 / 0.2080 / 0.1987 | 116.49 / 131.48 / 27.26 | 65.49 / 61.88 / 62.96 | 0.4217 / 0.4232 / 0.3790 |
+| oracle, β = 1.25 | 25.85 / 28.36 / 23.59 | 0.7215 / 0.7600 / 0.5714 | 0.2813 / 0.3120 / 0.3039 | 0.1983 / 0.2204 / 0.1952 | 114.25 / 131.79 / 24.85 | 69.55 / 66.82 / 69.24 | 0.4505 / 0.4539 / 0.4185 |
+
+Price μ (MSE of the Y channel per unit of `lambda_sem`) and share of the 64-pixel tiles at `lambda_sem` 0 / 0.5 / 1 / 1.5:
+
+| β | RealSR | DRealSR | DIV2K |
+|---|---|---|---|
+| 0.75 | 5.8e-4: 12 / 44 / 27 / 17% | 4.0e-4: 13 / 45 / 22 / 20% | 1.0e-3: 7 / 54 / 21 / 18% |
+| 1 | 1.4e-3: 2 / 28 / 37 / 32% | 1.1e-3: 3 / 27 / 36 / 34% | 2.9e-3: 0 / 28 / 43 / 29% |
+| 1.25 | 3.6e-3: 0 / 8 / 34 / 58% | 3.1e-3: 1 / 4 / 39 / 56% | 7.7e-3: 0 / 3 / 44 / 53% |
+
+PSNR of the budget curve (the M.0 oracle at μ = 0, β = 0.75, 1, 1.25, and `lambda_sem` = 1.5) against the default, at the MUSIQ and the MANIQA of the default (`data_tools/curve_gap.py --curve <the curve> --points freqortho`, sign reversed):
+
+| | RealSR | DRealSR | DIV2K |
+|---|---|---|---|
+| at the same MUSIQ | −0.41 | −0.57 | −0.75 |
+| at the same MANIQA | −0.79 | outside | outside |
+
+**Findings (M.0b):**
+- **Gate M.0b fails.** The budget curve is below the default at its MUSIQ, not +0.5 dB above it.
+- **At the same mean `lambda_sem` the oracle trades perception for fidelity.** β = 1 gains +0.52 / +0.38 / +0.40 dB, and on RealSR and DRealSR a better DISTS (LPIPS within 0.008), but loses 3.5 / 3.7 / 5.7 MUSIQ and 0.03 / 0.03 / 0.05 MANIQA. Its tiles at `lambda_sem` 0 and 0.5 are smooth, and the no-reference scores of the whole image drop more than the PSNR rises; β = 1.25 gets the MUSIQ back at a PSNR below the default.
+- **What this bounds.** The oracle is the optimum, over the dataset, of the M.1 loss with α = 0. A predictor trained for fidelity under the same budget cannot do better at the same MUSIQ.
+
