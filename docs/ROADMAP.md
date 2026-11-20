@@ -57,10 +57,24 @@ The method, if M.0 passes: a light predictor turns the LR into a map of the sema
 | Step | Goal | Status |
 |---|---|---|
 | M.0 | Is there room? FreqOrtho-SR with its default setting and at `lambda_sem` 0, 0.5, 1, 1.5 on RealSR, DRealSR, DIV2K (`cluster/onestep_baselines.sh`, `LAMBDA_SEM`); a per-tile oracle that takes in each 64 or 128-pixel tile the setting closest to the GT, and a control with the same choices at random places (`data_tools/oracle_map.py`, `cluster/oracle_map.sh`); the gap from the curve of the global settings at the same MUSIQ and MANIQA (`data_tools/curve_gap.py`). Inference only | todo |
-| M.1 | A predictor of the map from the LR (no GT), first at the tile level in pixel space; how much of the oracle gap it keeps | todo |
-| M.2 | The map in the latent, trained end to end; comparisons with FreqOrtho-SR, PiSA-SR, CODSR | todo |
+| M.0b | If M.0 fails because the oracle sits at the fidelity end of the curve: an oracle with a realism budget. In each tile it takes the setting that minimises `MSE − μ·lambda_sem`; sweeping μ traces a curve instead of a point. It is the exact optimum of the M.1 loss below with α = 0, so it bounds M.1. Control: the same choices at random places. Inference only | todo |
+| M.1 | A predictor of the map from the LR, with FreqOrtho-SR frozen, trained with a fidelity loss under a realism budget (below); how much of the oracle gap it keeps | todo |
+| M.2 | The map in the latent with the LoRAs unfrozen, trained end to end with the same loss; comparisons with FreqOrtho-SR, PiSA-SR, CODSR | todo |
 
 **Gate M.0.** First, the default FreqOrtho-SR should be within about 0.3 dB of its paper (26.27 / 29.08 / 24.35 dB). Go on to M.1 if the 64-pixel oracle is above the curve of the global settings by at least **+0.5 dB of PSNR at the same MUSIQ** and +0.3 dB at the same MANIQA on at least 2 of the 3 datasets, and the random control gains less than half of that. A point outside the range of the curve counts as a fail. The oracle chooses with the GT, so its gain is an upper bound; the control shows how much of it comes from where the choice is made.
+
+**Gate M.0b.** At the MUSIQ of the default setting (`lambda_sem` = 1), the curve of the budget oracle is at least **+0.5 dB of PSNR above the default** on at least 2 of the 3 datasets, and the random control with the same budget gains less than half of that.
+
+**Step M.1 in detail.** A pure fidelity loss would switch the semantic branch off: the M.0 oracle, which picks by pixel error, takes `lambda_sem` = 0 in 66% of the 64-pixel tiles of RealSR and 1.5 in 1%. So the network decides only where the realism goes, not how much: a budget β sets the mean of the map, and becomes the user's single control.
+- Map: Λ = 1.5 · sigmoid(logits + b), with the shift b found by bisection for each image so that mean(Λ) = β: the map stays in [0, 1.5], the range of M.0, and meets the budget by construction. β is drawn at random in [0, 1.5] for each sample and given to the predictor.
+- Output: ε = ε_pix + Λ ⊙ s, with ε_pix the pixel-branch prediction and s = ε_full − ε_pix the semantic branch, as FreqOrtho-SR already computes them for `lambda_sem` (two UNet passes); then z − ε through the VAE decoder.
+- Loss: MSE(SR, GT) + α · LPIPS(SR, GT).
+- Input of the predictor: the LR and s (what the semantic branch would add), so it can see where s invents content.
+- Cost: FreqOrtho-SR is frozen and ε is linear in Λ, so the gradient goes back through the VAE decoder only; ε_pix and s can be precomputed per crop.
+- If the map spends the budget where it costs little fidelity but adds no realism (flat regions), a per-region realism term follows: a patch discriminator or the CSD loss of PiSA-SR.
+- Evaluation: sweep β and compare the curve with that of the global `lambda_sem`, as in M.0.
+
+**Gate M.1.** Go on to M.2 if, at the MUSIQ of the default setting, the β curve is at least **+0.3 dB of PSNR above the global curve** on at least 2 of the 3 datasets, and keeps at least half of the gap of the oracle (M.0 or M.0b, whichever passed).
 
 ## BiBandSR: one-step SR with losses split at the LR Nyquist limit (stopped)
 
