@@ -436,3 +436,41 @@ PSNR of the budget curve (the M.0 oracle at μ = 0, β = 0.75, 1, 1.25, and `lam
 - **At the same mean `lambda_sem` the oracle trades perception for fidelity.** β = 1 gains +0.52 / +0.38 / +0.40 dB, and on RealSR and DRealSR a better DISTS (LPIPS within 0.008), but loses 3.5 / 3.7 / 5.7 MUSIQ and 0.03 / 0.03 / 0.05 MANIQA. Its tiles at `lambda_sem` 0 and 0.5 are smooth, and the no-reference scores of the whole image drop more than the PSNR rises; β = 1.25 gets the MUSIQ back at a PSNR below the default.
 - **What this bounds.** The oracle is the optimum, over the dataset, of the M.1 loss with α = 0. A predictor trained for fidelity under the same budget cannot do better at the same MUSIQ.
 
+
+## Step R.0: the premises of Track R on FiDeSR
+
+Jobs 1067284 (`cluster/setup_trackr.sh`), 1067285 (`cluster/feature_alignment.sh`), 1067286–1067288 (`cluster/onestep_baselines.sh` with `MODELS=fidesr`, `fidesr_ramlr`, `fidesr_ramhr`), node113 excluded, commit dade84a. FiDeSR at commit 8042f13 with its official weights, LF and HF strengths 0.2 (README), adain color fix, seed 42.
+
+### (a) What the semantics of the HR are worth to FiDeSR at test
+
+Values are RealSR / DRealSR / DIV2K. The paper reports 26.02 / 28.90 / 24.33 dB and LPIPS 0.2626 / 0.2836 / 0.2678.
+
+| Model | PSNR↑ | SSIM↑ | LPIPS↓ | DISTS↓ | FID↓ | MUSIQ↑ | MANIQA↑ |
+|---|---|---|---|---|---|---|---|
+| fidesr (empty prompt, official) | 26.20 / 29.13 / 24.48 | 0.7479 / 0.7942 / 0.6231 | 0.2611 / 0.2811 / 0.2681 | 0.1961 / 0.2101 / 0.1844 | 109.36 / 127.41 / 23.26 | 69.58 / 65.36 / 68.51 | 0.4612 / 0.4585 / 0.4399 |
+| fidesr_ramlr (RAM tags of the LR) | 26.09 / 29.03 / 24.36 | 0.7467 / 0.7933 / 0.6215 | 0.2600 / 0.2817 / 0.2697 | 0.1952 / 0.2099 / 0.1862 | 108.66 / 130.36 / 23.56 | 69.68 / 65.38 / 68.61 | 0.4606 / 0.4567 / 0.4377 |
+| fidesr_ramhr (RAM tags of the GT, oracle) | 26.06 / 29.04 / 24.35 | 0.7452 / 0.7935 / 0.6218 | 0.2580 / 0.2814 / 0.2655 | 0.1939 / 0.2087 / 0.1816 | 105.97 / 128.40 / 22.24 | 69.53 / 65.64 / 68.62 | 0.4628 / 0.4588 / 0.4401 |
+
+Cost: SR model 0.19 s per image (U-Net with merged LoRA 865.9 M, VAE 83.7 M, text encoder 340.4 M, LRRB 0.7 M parameters); RAM adds 0.035 s and 470.9 M parameters.
+
+### (b) Alignment of the FiDeSR features with DINOv2 of the HR
+
+500 DIV2K HR crops; LRs at three levels (blur σ, noise σ/255, JPEG quality): mild (0.6, 2, 95), medium (1.2, 8, 75), strong (2.0, 20, 40). Output quality: LPIPS 0.207 / 0.239 / 0.297, PSNR 24.50 / 23.91 / 22.83. CKNNA (k = 10) over the dataset between the 8×8 pooled tokens of each U-Net block and DINOv2 ViT-B/14 of the HR; ρ is the Spearman correlation between the per-image linear CKA and the per-image LPIPS, within each level, averaged over the levels.
+
+| Block | CKNNA mild | medium | strong | drop | ρ |
+|---|---|---|---|---|---|
+| down0 | 0.435 | 0.406 | 0.359 | 0.175 | −0.147 |
+| down1 | 0.568 | 0.551 | 0.490 | 0.138 | −0.171 |
+| down2 | 0.656 | 0.651 | 0.600 | 0.085 | −0.171 |
+| down3 | 0.637 | 0.635 | 0.593 | 0.070 | −0.172 |
+| mid | 0.618 | 0.602 | 0.546 | 0.117 | −0.157 |
+| up0 | 0.319 | 0.298 | 0.265 | 0.170 | −0.103 |
+| up1 | 0.714 | 0.696 | 0.654 | 0.084 | −0.059 |
+| up2 | 0.586 | 0.576 | 0.540 | 0.079 | −0.059 |
+| up3 | 0.392 | 0.390 | 0.357 | 0.088 | −0.090 |
+
+**Findings (R.0):**
+- **Gate R.0 fails on both conditions.** The largest drop is 17.5% (down0; 20% needed), the strongest correlation ρ = −0.17 (down3; −0.3 needed).
+- **The alignment is robust to the degradation.** From mild to strong the LPIPS rises by 0.09, but the CKNNA of the middle and up blocks, those REPA and U-REPA align, falls by only 7–12%. Within one level the alignment explains little of the quality.
+- **The semantics of the HR are worth almost nothing at test.** The GT tags, the information FiDeSR sees only in training, change LPIPS by −0.003 / +0.000 / −0.003 and cost 0.1 dB; the LR tags change nothing. There is no missing information for the alignment to replace.
+- **FiDeSR in our protocol** matches the paper (+0.15–0.23 dB, LPIPS within 0.003). On DIV2K it has the best LPIPS, DISTS and FID of the one-step baselines; on RealSR and DRealSR it is close to FreqOrtho-SR.
