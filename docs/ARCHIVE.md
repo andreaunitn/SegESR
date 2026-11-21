@@ -32,7 +32,7 @@ These are the reference points of any new direction, so they stay where the acti
 - outputs and metrics of zero-shot SeeSR (`seesr`), PiSA-SR (`pisasr`), OSEDiff (`osediff`), FreqOrtho-SR at its
   default setting (`freqortho`), bicubic (`bicubic`) and the four O.1 checkpoints (`o1_pisasr`, `o1_split`, `o1_pisasr_500`, `o1_split_500`);
 - the base models in `preset/models/` (SD 2 base, SD 2.1 base, SeeSR, DAPE, RAM, PiSA-SR, OSEDiff, FreqOrtho-SR);
-- the external code in `preset/external/` (PiSA-SR, OSEDiff, FreqOrtho-SR) and every dataset in `preset/datasets/`;
+- the external code in `preset/external/` (PiSA-SR, OSEDiff, FreqOrtho-SR, FiDeSR) and every dataset in `preset/datasets/`;
 - the logs of setup, downloads, zero-shot SeeSR and O.0.
 
 ## Segmentation (SegESR)
@@ -86,6 +86,6 @@ SegESR (SeeSR with SAM 2 conditions, PAFB blocks and a SAM 2 perceptual loss) an
   `LAMBDA_SEM`).
 - Data: outputs and metrics of `freqortho_ls0`, `freqortho_ls0.5`, `freqortho_ls1`, `freqortho_ls1.5` (M.0 sweep),
   `freqortho_oracle64`, `freqortho_shuffle64`, `freqortho_oracle128` (M.0), `freqortho_budget64_b0.75`,
-  `freqortho_budget64_b1`, `freqortho_budget64_b1.25` (M.0b); the logs of M.0 and M.0b. The default
-  `freqortho` stays in place.
+  `freqortho_budget64_b1`, `freqortho_budget64_b1.25` (M.0b), with the raw outputs of the sweep in `external_raw/`;
+  the logs of M.0 and M.0b. The default `freqortho` stays in place.
 

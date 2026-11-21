@@ -5,8 +5,11 @@
 #SBATCH --mem=32G
 #SBATCH --output=slurm_logs/%x_%j.log
 #
-# The one-step models PiSA-SR, OSEDiff (step O.0) and FreqOrtho-SR (step M.0) with their official weights and test
-# scripts, scored with our protocol. Needs cluster/setup_bibandsr.sh first.
+# The one-step models PiSA-SR, OSEDiff (step O.0), FreqOrtho-SR (step M.0) and FiDeSR (step R.0) with their official
+# weights and test scripts, scored with our protocol. Needs cluster/setup_bibandsr.sh first, and
+# cluster/setup_trackr.sh for FiDeSR.
+# FiDeSR runs through data_tools/fidesr_test.py (the official script with a choice of prompt): `fidesr` with the
+# official empty prompt, `fidesr_ramlr` with RAM tags of the LR, `fidesr_ramhr` with RAM tags of the GT (an oracle).
 #   1. the official test script (BiBandSR environment) writes to preset/datasets/external_raw/<model>/<dataset>;
 #   2. data_tools/collect_sr.py brings the outputs to preset/datasets/output/<model>/<dataset>/sample00, at 4x the
 #      LR size (the scripts round it down to a multiple of 8);
@@ -22,6 +25,7 @@
 #   MODELS=pisasr DATASETS=RealSR sbatch cluster/onestep_baselines.sh
 #   MODELS="o1_split=preset/archive/bibandsr/train_output/bibandsr/o1_split/checkpoints/model_2000.pkl" sbatch cluster/onestep_baselines.sh
 #   MODELS=freqortho LAMBDA_SEM="0 0.5 1 1.5" sbatch cluster/onestep_baselines.sh
+#   MODELS="fidesr fidesr_ramlr fidesr_ramhr" sbatch cluster/onestep_baselines.sh
 # Results: python3 data_tools/results_table.py pisasr osediff; ... --prefix finestruct
 
 set -euo pipefail
@@ -56,6 +60,18 @@ generate() {   # generate <kind> <weights> <LR dir> <raw output dir> <mode flags
                 --ram_path "$MODELS_DIR/ram_swin_large_14m.pth" --ram_ft_path "$MODELS_DIR/DAPE.pth" \
                 --process_size 512 --upscale 4 \
                 -i "$lr" -o "$out" ;;
+        fidesr|fidesr_ramlr|fidesr_ramhr)
+            local prompt=empty
+            [ "$kind" = fidesr_ramlr ] && prompt=ram_lr
+            [ "$kind" = fidesr_ramhr ] && prompt=ram_hr
+            # Official settings of the FiDeSR README (LF and HF strengths 0.2); the GTs are next to the LRs
+            in_bibandsr bash -c 'cd "$0" && exec python "$@"' "$ROOT/preset/external/FiDeSR" \
+                "$ROOT/data_tools/fidesr_test.py" \
+                --pretrained_model_path "$MODELS_DIR/stable-diffusion-2-1-base" \
+                --pretrained_path "$MODELS_DIR/fidesr/fidesr.pkl" \
+                --ram_path "$MODELS_DIR/ram_swin_large_14m.pth" --hr_dir "$(dirname "$lr")/test_HR" \
+                --prompt "$prompt" --process_size 512 --upscale 4 --hf_scale 0.2 --lf_scale 0.2 \
+                -i "$lr" -o "$out" ;;
         *) echo "Unknown model: $kind"; exit 1 ;;
     esac
 }
@@ -71,7 +87,7 @@ for spec in "${models[@]}"; do
         kind=pisasr
         weights="$ROOT/${spec#*=}"
     fi
-    if [ "$kind" = osediff ] || [ ${#lambdas[@]} -eq 0 ]; then
+    if [ "$kind" = osediff ] || [ "${kind#fidesr}" != "$kind" ] || [ ${#lambdas[@]} -eq 0 ]; then
         runs+=("$name $kind $weights --default")
     else
         for value in "${lambdas[@]}"; do
@@ -85,7 +101,7 @@ for dataset in "${datasets[@]}"; do
     for run in "${runs[@]}"; do
         read -r model kind weights mode <<< "$run"
         read -r -a mode <<< "$mode"
-        [ "$kind" = osediff ] && mode=()
+        [ "$kind" = osediff ] || [ "${kind#fidesr}" != "$kind" ] && mode=()
         out_dir="$OUTPUT_DIR/$model/$dataset"
         n_lr=$(find "$data_dir/test_LR" -maxdepth 1 -type f | wc -l)
         n_out=0     # find fails on a missing folder, which would end the script (set -e with pipefail)
