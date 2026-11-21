@@ -8,14 +8,15 @@ and logs on the cluster in `preset/archive/<direction>/`. Results and decisions 
 (`archive/track_a/data_tools/seed_spread.py` was `data_tools/seed_spread.py`), but the archived code is not meant
 to run from there. The git tag `pre-archive` is the last commit with everything at its original paths:
 `git worktree add ../SegESR-pre-archive pre-archive` gives a copy where every archived step runs as recorded.
-Track M and Track R were archived later: their tags are `pre-archive-m` and `pre-archive-r`.
+Track M and Track R were archived later: their tags are `pre-archive-m` and `pre-archive-r`. The segmentation track
+(SegESR) was archived with the others and is active again: its code is back at its original paths, and its models,
+outputs and logs are back in `preset/`.
 
 **Reading archived metrics.** `python3 data_tools/results_table.py --metrics_dir preset/archive/<direction>/metrics`
 (add `--prefix finestruct` or `--prefix seedspread` for the other files).
 
 | Direction | Status | Steps | Code | Data on the cluster |
 |---|---|---|---|---|
-| Segmentation (SegESR) | on hold since step 0.1 | 0.1 | `archive/segmentation/` | `preset/archive/segmentation/` |
 | Track V (VAE) | paused after V.1 | V.0, V.1 | `archive/track_v/` | `preset/archive/track_v/` |
 | Track H (hallucinations) | stopped after H.0b | H.0a, H.0b | `archive/track_h/` | `preset/archive/track_h/` |
 | Track A (LR-supported band), with T.0 | method dropped | A.0, A.0b, T.0 | `archive/track_a/` | `preset/archive/track_a/` |
@@ -35,19 +36,6 @@ These are the reference points of any new direction, so they stay where the acti
 - the base models in `preset/models/` (SD 2 base, SD 2.1 base, SeeSR, DAPE, RAM, PiSA-SR, OSEDiff, FreqOrtho-SR, FiDeSR);
 - the external code in `preset/external/` (PiSA-SR, OSEDiff, FreqOrtho-SR, FiDeSR) and every dataset in `preset/datasets/`;
 - the logs of setup, downloads, zero-shot SeeSR and O.0.
-
-## Segmentation (SegESR)
-
-SegESR (SeeSR with SAM 2 conditions, PAFB blocks and a SAM 2 perceptual loss) and the fine-tuned SeeSR baseline.
-
-- Code: the `segesr` package, `train.py`, `test.py` (also the generator of every SeeSR output of the other
-  directions), `configs/`, `scripts/`, `cluster/{train,test,prepare_data,tensorboard}.sh`, the data preparation in
-  `data_tools/` (`make_paired_data.py`, `make_tags.py`, `make_dape_embeds.py`, `sam_processing.py`), their tests,
-  the original `README.md` with its figure, and `commands.txt`.
-- Data: `train_output/{segesr,seesr_finetuned}`; outputs and metrics of `segesr_checkpoint-15000`,
-  `segesr_checkpoint-15000_norefresh`, `seesr_finetuned`, `seesr_finetuned_checkpoint-15000`; `models/tiny_vae`
-  (used only by the SegESR losses); `tensorboard/`; the training, test and data logs.
-- `data_tools/metrics.py --tb_dir` still imports its image helpers from `archive/segmentation/segesr`.
 
 ## Track V (VAE)
 

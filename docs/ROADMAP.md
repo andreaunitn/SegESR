@@ -6,7 +6,7 @@ The research directions below share Phase 0. The code, models and results of the
 - **Stopped: Track M (where to generate).** A one-step model whose fidelity-realism setting varies over the image, from a map predicted from the LR, instead of one global setting. Base: FreqOrtho-SR (ECCV'26). Gates M.0 and M.0b failed: a per-tile oracle that sees the GT gains at most +0.3 dB over the global settings at the same MUSIQ, and with a realism budget it falls 0.4–0.75 dB below the default, because the tiles it keeps faithful cost more MUSIQ than they give PSNR. See [Track M](#track-m-spatially-varying-fidelity-realism-setting-stopped).
 - **Stopped: BiBandSR.** A one-step SR model trained with losses split at the LR Nyquist limit: fidelity below it, realism above it. Gate O.1 failed: against the control, +0.14–0.30 dB below 1/8 on the test sets (+0.67 dB on the validation crops), with MUSIQ and MANIQA equal at step 500. See [BiBandSR](#bibandsr-one-step-sr-with-losses-split-at-the-lr-nyquist-limit-stopped).
 - **Track A (fidelity in the LR-supported band): analysis done, training-free method dropped.** About half of SeeSR's MSE is at frequencies the LR determines, but changes at inference recover only +0.3–0.5 dB. T.0 shows that a model trained for fidelity does not reach that band of the RealSR and DRealSR GTs either (camera mismatch), but does on DIV2K (synthetic degradations, sharp GT: about +2 dB below 1/8), where the post-hoc fusion still costs perception. Continued, with training, in BiBandSR. See [Track A](#track-a-fidelity-in-the-lr-supported-band-analysis-done).
-- **On hold: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1).
+- **Active again: the segmentation track (Phases 1–5 below).** At the same step, SegESR is below fine-tuned SeeSR (step 0.1). Its code is back at its original paths.
 - **Paused: Track V (VAE).** A decoder that can be plugged into any latent SR model, where each pixel uses as much LR evidence as the LR actually holds. Gate V.1 failed; V.2 was not tried, and PGSR already covers it. See [Track V](#track-v-evidence-aware-decoder-paused).
 - **Stopped: fallback track H.** H.0b shows that the excess of generated detail is mostly a mismatch with the soft GTs of RealSR and DRealSR, so H.1 is dropped. Its analysis of the metrics stays available as supporting material.
 
@@ -168,7 +168,7 @@ Goal: find what moves the LR-supported band during sampling and reduce it withou
 - **Seed:** a seed part of the low-band error of at least about 30% calls for a consistency step on the low band during sampling, without a known degradation.
 - **Neither, and the oracle gain is large:** the degradation blur, i.e. degradation estimation. Stop: crowded field.
 
-## Segmentation track (on hold)
+## Segmentation track (active)
 
 Method: **B + C + D**. The evaluation contribution is **A**.
 

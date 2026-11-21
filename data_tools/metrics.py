@@ -147,8 +147,6 @@ def log_to_tensorboard(args, results, sr_dir, image_files):
     """Metrics as scalars 'test/<dataset>/<metric>' and the first images as 'test/<dataset>/<image>' (SR | GT)."""
 
     from torch.utils.tensorboard import SummaryWriter
-    # The image helpers belong to the archived segmentation package
-    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "archive" / "segmentation"))
     from segesr.utils.tensorboard_utils import side_by_side, to_tensorboard_image
 
     writer = SummaryWriter(args.tb_dir)
