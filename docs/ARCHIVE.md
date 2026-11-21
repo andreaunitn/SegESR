@@ -8,7 +8,7 @@ and logs on the cluster in `preset/archive/<direction>/`. Results and decisions 
 (`archive/track_a/data_tools/seed_spread.py` was `data_tools/seed_spread.py`), but the archived code is not meant
 to run from there. The git tag `pre-archive` is the last commit with everything at its original paths:
 `git worktree add ../SegESR-pre-archive pre-archive` gives a copy where every archived step runs as recorded.
-Track M was archived later: its tag is `pre-archive-m`.
+Track M and Track R were archived later: their tags are `pre-archive-m` and `pre-archive-r`.
 
 **Reading archived metrics.** `python3 data_tools/results_table.py --metrics_dir preset/archive/<direction>/metrics`
 (add `--prefix finestruct` or `--prefix seedspread` for the other files).
@@ -21,6 +21,7 @@ Track M was archived later: its tag is `pre-archive-m`.
 | Track A (LR-supported band), with T.0 | method dropped | A.0, A.0b, T.0 | `archive/track_a/` | `preset/archive/track_a/` |
 | BiBandSR | stopped at gate O.1 | O.0, O.1 | `archive/bibandsr/` | `preset/archive/bibandsr/` |
 | Track M (where to generate) | stopped at gate M.0b | M.0, M.0b | `archive/track_m/` | `preset/archive/track_m/` |
+| Track R (representation alignment) | stopped at gate R.0 | R.0 | `archive/track_r/` | `preset/archive/track_r/` |
 
 Each data folder has the same layout: `train_output/` (checkpoints), `output/<name>/<dataset>/` (SR images, as in
 `preset/datasets/output/`), `metrics/<dataset>/` (as in `metrics/`), `models/`, `tensorboard/`, `slurm_logs/`.
@@ -30,8 +31,8 @@ Each data folder has the same layout: `train_output/` (checkpoints), `output/<na
 These are the reference points of any new direction, so they stay where the active scripts look for them:
 
 - outputs and metrics of zero-shot SeeSR (`seesr`), PiSA-SR (`pisasr`), OSEDiff (`osediff`), FreqOrtho-SR at its
-  default setting (`freqortho`), bicubic (`bicubic`) and the four O.1 checkpoints (`o1_pisasr`, `o1_split`, `o1_pisasr_500`, `o1_split_500`);
-- the base models in `preset/models/` (SD 2 base, SD 2.1 base, SeeSR, DAPE, RAM, PiSA-SR, OSEDiff, FreqOrtho-SR);
+  default setting (`freqortho`), FiDeSR with its official empty prompt (`fidesr`), bicubic (`bicubic`) and the four O.1 checkpoints (`o1_pisasr`, `o1_split`, `o1_pisasr_500`, `o1_split_500`);
+- the base models in `preset/models/` (SD 2 base, SD 2.1 base, SeeSR, DAPE, RAM, PiSA-SR, OSEDiff, FreqOrtho-SR, FiDeSR);
 - the external code in `preset/external/` (PiSA-SR, OSEDiff, FreqOrtho-SR, FiDeSR) and every dataset in `preset/datasets/`;
 - the logs of setup, downloads, zero-shot SeeSR and O.0.
 
@@ -89,3 +90,11 @@ SegESR (SeeSR with SAM 2 conditions, PAFB blocks and a SAM 2 perceptual loss) an
   `freqortho_budget64_b1`, `freqortho_budget64_b1.25` (M.0b), with the raw outputs of the sweep in `external_raw/`;
   the logs of M.0 and M.0b. The default `freqortho` stays in place.
 
+## Track R (representation alignment)
+
+- Code: `data_tools/feature_alignment.py`, `cluster/feature_alignment.sh`, their test. `data_tools/fidesr_test.py`
+  stays active: `cluster/onestep_baselines.sh` runs FiDeSR through it (`fidesr`, and the prompts `fidesr_ramlr` and
+  `fidesr_ramhr`). `cluster/setup_trackr.sh` became `cluster/setup_fidesr.sh`, without DINOv2.
+- Data: outputs and metrics of `fidesr_ramlr` and `fidesr_ramhr` (R.0(a)) and `metrics/DIV2K/alignment_fidesr/`
+  (R.0(b): `alignment.json`, `per_image.csv`); `models/dinov2-base`; the logs of R.0. The default `fidesr` stays in
+  place.

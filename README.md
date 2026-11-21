@@ -19,10 +19,9 @@ are closed. Their code is in `archive/`, and their models and outputs on the clu
 | `data_tools/curve_gap.py` | Gap of a model from the curve of the global settings of another model, at the same perceptual score |
 | `cluster/onestep_baselines.sh` | PiSA-SR, OSEDiff, FreqOrtho-SR and FiDeSR (official or other weights, default or several `lambda_sem`, FiDeSR with three prompts): generation and metrics on RealSR, DRealSR, DIV2K |
 | `data_tools/fidesr_test.py` | FiDeSR inference with an empty prompt or RAM tags of the LR or of the GT (step R.0) |
-| `data_tools/feature_alignment.py`, `cluster/feature_alignment.sh` | Alignment of the FiDeSR U-Net features with DINOv2 of the HR at three degradation levels, and its correlation with LPIPS (step R.0) |
 | `cluster/fine_structure.sh` | Fine-structure metrics of existing outputs |
 | `cluster/setup_env.sh`, `cluster/setup_bibandsr.sh` | The two environments: the container venv (metrics, and SeeSR) and the PiSA-SR and OSEDiff venv |
-| `cluster/setup_trackr.sh` | FiDeSR code and weights and DINOv2 ViT-B/14, in the PiSA-SR and OSEDiff venv (Track R) |
+| `cluster/setup_fidesr.sh` | FiDeSR code and weights, in the PiSA-SR and OSEDiff venv |
 | `cluster/env.sh` | Shared paths and helpers of the jobs |
 | `cluster/hpc` | Local helper: sync the code, submit and watch jobs (`cluster/hpc help`) |
 | `third_party/` | Vendored `basicsr` and `ram` |

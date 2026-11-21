@@ -7,7 +7,7 @@
 #
 # The one-step models PiSA-SR, OSEDiff (step O.0), FreqOrtho-SR (step M.0) and FiDeSR (step R.0) with their official
 # weights and test scripts, scored with our protocol. Needs cluster/setup_bibandsr.sh first, and
-# cluster/setup_trackr.sh for FiDeSR.
+# cluster/setup_fidesr.sh for FiDeSR.
 # FiDeSR runs through data_tools/fidesr_test.py (the official script with a choice of prompt): `fidesr` with the
 # official empty prompt, `fidesr_ramlr` with RAM tags of the LR, `fidesr_ramhr` with RAM tags of the GT (an oracle).
 #   1. the official test script (BiBandSR environment) writes to preset/datasets/external_raw/<model>/<dataset>;
