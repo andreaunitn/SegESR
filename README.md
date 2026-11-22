@@ -9,6 +9,23 @@
 
 ---
 
+## 🚧 Current status
+
+The code now follows the ECCV 2026 paper (except fp16 on the cluster GPUs, which lack bf16), and the training data are recomputed to match it.
+We are training this version (stage 1 + stage 2) to get a clean reference.
+Next, the model is changed following the ECCV reviews, targeting ICCV 2027; every change is measured against this reference.
+
+**TODO**
+- [ ] Smoke test of stages 1 and 2 (memory, speed, loss)
+- [ ] Train stage 1 (20K steps) and stage 2 (28K steps)
+- [ ] Evaluate on DIV2K-Val, RealSR, DRealSR, RealLR200 against zero-shot SeeSR
+- [ ] Spatial SMCA: inject the mask map spatially instead of as row tokens
+- [ ] Reliability-weighted masks (stability score / predicted IoU)
+- [ ] Timestep-weighted L_sam (ablation)
+- [ ] Hallucination metric and missing baselines asked by the reviewers
+
+---
+
 ## 🧩 Architecture Overview
 ![segesr](assets/figs/model_overview.png)
 
@@ -171,8 +188,6 @@ Edit the `#SBATCH` lines (partition, QOS, memory) for another cluster.
 After step 0.1 the segmentation track was put on hold and other directions were tried; they are closed, their code
 is in `archive/` and their models and outputs on the cluster are in `preset/archive/`.
 
-- [docs/ROADMAP.md](docs/ROADMAP.md): the directions, their steps and the decisions taken at each gate.
-- [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md): every job with its commit, flags and metrics.
 - [docs/ARCHIVE.md](docs/ARCHIVE.md): where the code, models and results of each closed direction are.
 
 ## Shared tools and baselines

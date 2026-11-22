@@ -173,7 +173,7 @@ Do not sync while a job is running if it may restart: the restart would use the 
 [CLUSTER] all metrics as one table per dataset (best value of each metric marked with *):
     python3 data_tools/results_table.py
     python3 data_tools/results_table.py seesr checkpoint-15000 --datasets RealSR DRealSR   # only some results
-    python3 data_tools/results_table.py --format markdown                                   # for docs/EXPERIMENTS.md
+    python3 data_tools/results_table.py --format markdown                                
 [LOCAL] the same without logging in:
     cluster/hpc run python3 data_tools/results_table.py
 

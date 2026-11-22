@@ -1,8 +1,7 @@
 # Archive of the closed directions
 
 Every direction that was tried and closed keeps its code in `archive/<direction>/` and its models, outputs, metrics
-and logs on the cluster in `preset/archive/<direction>/`. Results and decisions are in [ROADMAP.md](ROADMAP.md) and
-[EXPERIMENTS.md](EXPERIMENTS.md).
+and logs on the cluster in `preset/archive/<direction>/`.
 
 **Rerunning archived code.** Inside `archive/` each file keeps its path relative to the repository root
 (`archive/track_a/data_tools/seed_spread.py` was `data_tools/seed_spread.py`), but the archived code is not meant

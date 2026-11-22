@@ -146,7 +146,7 @@ def parse_args(argv=None):
     parser.add_argument("--prefix", default="results",
                         help="File prefix: results (data_tools/metrics.py) or finestruct (data_tools/fine_structure.py).")
     parser.add_argument("--format", choices=["text", "markdown"], default="text",
-                        help="text for the terminal (best value marked with *), markdown for docs/EXPERIMENTS.md (best in bold).")
+                        help="text for the terminal (best value marked with *), markdown (best in bold).")
     return parser.parse_args(argv)
 
 def main(argv=None):
