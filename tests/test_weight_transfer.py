@@ -60,7 +60,10 @@ def expected_from_source(source_param, target_param):
     if source_param.shape == target_param.shape:
         return source_param
     if target_param.dim() > 1:
-        return source_param[:, :target_param.shape[1]]
+        expected = torch.zeros_like(target_param)
+        num_columns = min(source_param.shape[1], target_param.shape[1])
+        expected[:, :num_columns] = source_param[:, :num_columns]
+        return expected
     return source_param[:target_param.shape[0]]
 
 def test_sam_attentions_are_initialized_from_dape(model, accelerator):
