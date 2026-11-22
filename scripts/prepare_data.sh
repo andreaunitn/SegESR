@@ -52,7 +52,7 @@ python data_tools/make_dape_embeds.py \
 
 echo "--- Step 4/4: SAM 2 embeddings and mask logits ---"
 python data_tools/sam_processing.py \
-    --image_dir "$SAVE_DIR/lr" \
+    --image_dir "$SAVE_DIR/sr_bicubic" \
     --embed_dir "$SAVE_DIR/sam_embeds" \
     --logit_dir "$SAVE_DIR/seg_embeds" \
     --skip_existing

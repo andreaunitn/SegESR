@@ -162,13 +162,6 @@ def main(args):
             validation_prompt += args.added_prompt # clean, extremely detailed, best quality, sharp, clean
             negative_prompt = args.negative_prompt # dirty, messy, low quality, frames, deformed,
 
-            # SAM 2 conditions are computed on the original LR image, as for the training data
-            sam2_encoder_hidden_states = sam2_segmentation_encoder_hidden_states = None
-            if uses_sam2:
-                sam_img_embeds, sam_seg_logits = compute_sam2_conditions(validation_image, sam_generator, max_masks=MAX_MASKS)
-                sam2_encoder_hidden_states = sam_img_embeds.to(accelerator.device)
-                sam2_segmentation_encoder_hidden_states = seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device)
-
             if args.save_prompts:
                 txt_save_path = os.path.join(txt_path, f"{Path(image_name).stem}.txt")
                 with open(txt_save_path, "w") as file:
@@ -182,11 +175,19 @@ def main(args):
                 scale = (args.process_size//rscale)/min(ori_width, ori_height)
                 validation_image = validation_image.resize((int(scale*ori_width), int(scale*ori_height)))
 
-            validation_image = validation_image.resize((validation_image.size[0]*rscale, validation_image.size[1]*rscale))
+            validation_image = validation_image.resize((validation_image.size[0]*rscale, validation_image.size[1]*rscale), Image.BICUBIC)
             validation_image = validation_image.resize((validation_image.size[0]//8*8, validation_image.size[1]//8*8))
             width, height = validation_image.size
 
             print(f"input size: {height}x{width}")
+
+            # SAM 2 conditions are computed on the bicubic-upsampled LR image, the ControlNet input, as for the
+            # training data ('sr_bicubic/')
+            sam2_encoder_hidden_states = sam2_segmentation_encoder_hidden_states = None
+            if uses_sam2:
+                sam_img_embeds, sam_seg_logits = compute_sam2_conditions(validation_image, sam_generator, max_masks=MAX_MASKS)
+                sam2_encoder_hidden_states = sam_img_embeds.to(accelerator.device)
+                sam2_segmentation_encoder_hidden_states = seg_logits_to_hidden_states(sam_seg_logits).to(accelerator.device)
 
             for sample_dir in sample_dirs:
                 os.makedirs(sample_dir, exist_ok=True)

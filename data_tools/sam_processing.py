@@ -27,8 +27,8 @@ def process_dataset(args):
     - `--logit_dir`: mask decoder logits, (N, 1, 256, 256) per image -> training folder 'seg_embeds/'
     - `--mask_dir`:  binary masks, (N, H, W) per image                -> training folder 'gt_seg/' (optional)
 
-    As in the paper (Sec. 3.1), embeddings and logits are computed on the LR images ('lr/'),
-    binary masks on the GT images ('gt/').
+    Embeddings and logits are computed on the LR images upsampled x4 with bicubic interpolation
+    ('sr_bicubic/', the ControlNet input; test.py does the same), binary masks on the GT images ('gt/').
     """
 
     output_dirs = [args.embed_dir, args.logit_dir, args.mask_dir]

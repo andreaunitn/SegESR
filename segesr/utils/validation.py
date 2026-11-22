@@ -60,7 +60,9 @@ def prepare_validation_conditions(image_path, ram_model, sam_generator, device):
     ram_model.to("cpu")
 
     if sam_generator is not None:
-        sam_img_embeds, sam_seg_logits = compute_sam2_conditions(val_image, sam_generator, max_masks=MAX_MASKS)
+        # On the bicubic-upsampled LR image (the ControlNet input), as for the training data ('sr_bicubic/')
+        upsampled = val_image.resize((val_image.width * 4, val_image.height * 4), Image.BICUBIC)
+        sam_img_embeds, sam_seg_logits = compute_sam2_conditions(upsampled, sam_generator, max_masks=MAX_MASKS)
         conditions["sam2_encoder_hidden_states"] = sam_img_embeds
         conditions["sam2_segmentation_encoder_hidden_states"] = seg_logits_to_hidden_states(sam_seg_logits)
 
@@ -130,7 +132,7 @@ def validation(
         negative_prompt = "dotted, noise, blur, lowres, smooth"
 
         width, height = val_image.size
-        cond_image = val_image.resize((width * 4, height * 4))
+        cond_image = val_image.resize((width * 4, height * 4), Image.BICUBIC)
 
         generator = torch.Generator(device=accelerator.device).manual_seed(args.seed if args.seed is not None else 42)
         logger.info(f"Generating validation sample at step {global_step} with prompt: '{final_prompt}'")
