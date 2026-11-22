@@ -70,7 +70,8 @@ Do not sync while a job is running if it may restart: the restart would use the 
 3. MAIN TRAINING RUNS
 ---------------------
 [CLUSTER]
-    sbatch --time=<MaxTime> cluster/train.sh configs/train_segesr.yaml    # full SegESR       -> preset/train_output/segesr
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_segesr.yaml         # SegESR stage 1    -> preset/train_output/segesr_eccv_stage1
+    sbatch --time=<MaxTime> cluster/train.sh configs/train_segesr_stage2.yaml  # SegESR stage 2    -> preset/train_output/segesr_eccv
     sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml     # SeeSR fine-tuned  -> preset/train_output/seesr_finetuned
 
     If a run stops (time limit, crash): submit the SAME command again; it resumes from the latest checkpoint.
@@ -80,31 +81,21 @@ Do not sync while a job is running if it may restart: the restart would use the 
 4. ABLATION RUNS (one component at a time, from the SeeSR baseline)
 -------------------------------------------------------------------
 [CLUSTER]
-    # Step 1: PAFB
+    # V1: PAFB
     sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
         --output_dir=preset/train_output/pafb
 
-    # Step 2: + SICA
+    # V2: + SICA
     sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
         --use_sam2_image_attention \
         --output_dir=preset/train_output/pafb_sica
 
-    # Step 3: + SMCA
+    # V3: + SMCA
     sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
         --use_sam2_image_attention --use_sam2_segmentation_attention \
         --output_dir=preset/train_output/pafb_sica_smca
 
-    # Step 4: + segment routing
-    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
-        --use_sam2_image_attention --use_sam2_segmentation_attention --segment_routing \
-        --output_dir=preset/train_output/pafb_sica_smca_routing
-
-    # Step 5: + SAM 2 perceptual loss
-    sbatch --time=<MaxTime> cluster/train.sh configs/train_seesr.yaml --attention_fusion=parallel \
-        --use_sam2_image_attention --use_sam2_segmentation_attention --segment_routing --use_sam_loss \
-        --output_dir=preset/train_output/pafb_sica_smca_routing_samloss
-
-    # Step 6 (+ GT-derived SAM 2 conditions) = full SegESR = section 3
+    # + SAM 2 perceptual loss = full SegESR = section 3
 
 
 5. TESTING (inference + metrics + TensorBoard)
@@ -115,18 +106,13 @@ Do not sync while a job is running if it may restart: the restart would use the 
 
     # Every checkpoint of a run, one job per dataset (DIV2K is by far the longest)
     for d in RealSR DRealSR RealLR200 DIV2K; do
-        DATASETS=$d sbatch -J segesr_$d cluster/test.sh preset/train_output/segesr
+        DATASETS=$d sbatch -J segesr_$d cluster/test.sh preset/train_output/segesr_eccv
     done
     # same with preset/train_output/seesr_finetuned, preset/train_output/pafb, ...
-    # only some checkpoints: CHECKPOINTS="checkpoint-15000" DATASETS=RealSR sbatch cluster/test.sh preset/train_output/segesr
-
-    # Test-time ablation: full SegESR WITHOUT the SAM 2 refresh (saved with the suffix _norefresh)
-    for d in RealSR DRealSR RealLR200 DIV2K; do
-        TAG=norefresh TEST_ARGS="--sam_refresh_timesteps" DATASETS=$d sbatch -J segesr_norefresh_$d cluster/test.sh preset/train_output/segesr
-    done
+    # only some checkpoints: CHECKPOINTS="checkpoint-15000" DATASETS=RealSR sbatch cluster/test.sh preset/train_output/segesr_eccv
 
     # Only recompute the metrics of images already generated
-    SKIP_GENERATION=true DATASETS=RealSR sbatch -J metrics cluster/test.sh preset/train_output/segesr
+    SKIP_GENERATION=true DATASETS=RealSR sbatch -J metrics cluster/test.sh preset/train_output/segesr_eccv
 
     # VAE ceiling (best any latent SR model can do with the SD 2 VAE), scored like an SR output
     sbatch cluster/vae_ceiling.sh                 # decoder(encoder(GT)) -> results_vae_sd2_encode

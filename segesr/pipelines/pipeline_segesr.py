@@ -46,8 +46,7 @@ from diffusers.pipelines.controlnet.multicontrolnet import MultiControlNetModel
 
 
 from segesr.pipelines.vaehook import VAEHook, perfcount
-from segesr.utils.diffusion_utils import predict_original_latents
-from segesr.utils.sam_utils import MAX_MASKS, compute_sam2_conditions, model_uses_sam2, pad_seg_logits, sam2_model_kwargs
+from segesr.utils.sam_utils import model_uses_sam2, sam2_model_kwargs
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -456,42 +455,19 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
 
         return prompt_embeds, ram_encoder_hidden_states
 
-    def _prepare_sam2_conditions(self, img_embeds, seg_logits, latent_size, do_classifier_free_guidance):
+    def _prepare_sam2_conditions(self, img_embeds, seg_logits, do_classifier_free_guidance):
         """
-        SAM 2 image embeddings (B, 256, 64, 64) and mask logits (B, N, 256, 256) -> the UNet/ControlNet kwargs
-        their config uses (none for a model without SAM 2 attentions). The segment masks are built at the full
-        `latent_size` and cropped per latent tile in the denoising loop.
+        SAM 2 image embeddings (B, 256, 64, 64) and mask logits (B, N, 256, 256) of the LR image -> the
+        UNet/ControlNet kwargs their config uses (none for a model without SAM 2 attentions).
         """
 
-        kwargs = sam2_model_kwargs(self.unet.config, img_embeds, seg_logits, latent_size, self.unet.dtype)
+        kwargs = sam2_model_kwargs(self.unet.config, img_embeds, seg_logits, self.unet.dtype)
 
         if do_classifier_free_guidance:
             kwargs = {k: torch.cat([v, v]) for k, v in kwargs.items()}
 
         return kwargs
 
-    @torch.no_grad()
-    def _refresh_sam2_conditions(self, pred_original_latents, sam_generator, latent_size, do_classifier_free_guidance):
-        """
-        Recomputes the SAM 2 conditions on the current estimate of the clean image, decoded from the
-        predicted x_0, instead of the degraded LR input.
-        """
-
-        image = self.vae.decode(pred_original_latents.to(self.vae.dtype) / self.vae.config.scaling_factor, return_dict=False)[0]
-        images = self.image_processor.postprocess(image.float(), output_type="pil")
-
-        img_embeds, seg_logits = [], []
-        for pil_image in images:
-            embeds, logits = compute_sam2_conditions(pil_image, sam_generator, max_masks=MAX_MASKS)
-            img_embeds.append(embeds)
-            seg_logits.append(logits.squeeze(1))
-
-        device = pred_original_latents.device
-        img_embeds = torch.cat(img_embeds).to(device)
-        seg_logits = pad_seg_logits(seg_logits).to(device)
-
-        return self._prepare_sam2_conditions(img_embeds, seg_logits, latent_size, do_classifier_free_guidance)
-    
     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion.StableDiffusionPipeline.run_safety_checker
     def run_safety_checker(self, image, device, dtype):
         if self.safety_checker is None:
@@ -846,8 +822,6 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
         ram_encoder_hidden_states=None,
         sam2_encoder_hidden_states=None,
         sam2_segmentation_encoder_hidden_states=None,
-        sam_generator=None,
-        sam_refresh_timesteps=None,
         latent_tiled_size=320,
         latent_tiled_overlap=4,
         args=None
@@ -1036,19 +1010,12 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
             latents = self.scheduler.add_noise(latents_condition_image[0:1, ...], latents, start_steps_tensor)
     
 
-        # SAM 2 conditions (only for a model with SAM 2 attentions): segment tokens and masks at the latent resolution
-        latent_size = latents.shape[-2:]
-        uses_sam2 = model_uses_sam2(self.unet.config)
+        # SAM 2 conditions of the LR image (only for a model with SAM 2 attentions), fixed for all the timesteps
         sam2_kwargs = {}
-        if uses_sam2:
+        if model_uses_sam2(self.unet.config):
             sam2_kwargs = self._prepare_sam2_conditions(
-                sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, latent_size, do_classifier_free_guidance
+                sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, do_classifier_free_guidance
             )
-
-        # Timesteps at which the SAM 2 conditions are recomputed on the predicted clean image
-        refresh = uses_sam2 and sam_generator is not None
-        pending_refresh_timesteps = sorted(sam_refresh_timesteps or [], reverse=True) if refresh else []
-        pred_original_latents = None
 
         # 7. Prepare extra step kwargs. TODO: Logic should ideally just be moved out of the pipeline
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, eta)
@@ -1069,13 +1036,6 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                 if t > start_steps:
                     print(f'pass {t} steps.')
                     continue
-
-                if pending_refresh_timesteps and pred_original_latents is not None and t <= pending_refresh_timesteps[0]:
-                    while pending_refresh_timesteps and t <= pending_refresh_timesteps[0]:
-                        pending_refresh_timesteps.pop(0)
-                    sam2_kwargs = self._refresh_sam2_conditions(
-                        pred_original_latents, sam_generator, latent_size, do_classifier_free_guidance
-                    )
 
                 # expand the latents if we are doing classifier free guidance
                 latent_model_input = torch.cat([latents] * 2) if do_classifier_free_guidance else latents
@@ -1177,12 +1137,6 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                                 cond_list_t = torch.cat(cond_list, dim=0)
                                 img_list_t = torch.cat(img_list, dim=0)
 
-                                # Segment masks of the current tile (the segment tokens are global)
-                                tile_sam2_kwargs = dict(sam2_kwargs)
-                                if "sam2_segmentation_masks" in sam2_kwargs:
-                                    tile_sam2_kwargs["sam2_segmentation_masks"] = sam2_kwargs["sam2_segmentation_masks"][
-                                        :, :, input_start_y:input_end_y, input_start_x:input_end_x
-                                    ]
                                 #print(input_list_t.shape, cond_list_t.shape, img_list_t.shape, fg_mask_list_t.shape)
 
                                 down_block_res_samples, mid_block_res_sample = self.controlnet(
@@ -1194,7 +1148,7 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                                     guess_mode=guess_mode,
                                     return_dict=False,
                                     image_encoder_hidden_states = ram_encoder_hidden_states,
-                                    **tile_sam2_kwargs,
+                                    **sam2_kwargs,
                                 )
 
                                 if guess_mode and do_classifier_free_guidance:
@@ -1214,7 +1168,7 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                                     mid_block_additional_residual=mid_block_res_sample,
                                     return_dict=False,
                                     image_encoder_hidden_states = ram_encoder_hidden_states,
-                                    **tile_sam2_kwargs,
+                                    **sam2_kwargs,
                                 )[0]
 
                                 #for sample_i in range(model_out.size(0)):
@@ -1256,9 +1210,6 @@ class StableDiffusionControlNetPipeline(DiffusionPipeline, TextualInversionLoade
                 if do_classifier_free_guidance:
                     noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
                     noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_text - noise_pred_uncond)
-
-                if pending_refresh_timesteps:
-                    pred_original_latents = predict_original_latents(self.scheduler, latents, noise_pred, t)
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]

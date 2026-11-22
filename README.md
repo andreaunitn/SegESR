@@ -17,9 +17,8 @@
 Unlike traditional super-resolution methods, SegESR integrates segmentation-aware priors to guide the diffusion process. Key contributions include:
 
 * **SAM 2-Guided Generation**: Introduced two new semantic priors derived from SAM 2:
-    * **SICA (SAM Image Cross-Attention)**: Leverages SAM 2 image embeddings from the [Hiera Encoder](https://huggingface.co/docs/transformers/model_doc/hiera).
-    * **SMCA (SAM Masks Cross-Attention)**: Every SAM 2 segment becomes one token (the Hiera embedding averaged inside its mask), so the condition does not depend on the order or the number of masks. Each latent pixel attends only to the segments covering it (*segment routing*), which preserves object boundaries and details.
-* **Closed-loop SAM 2 conditions**: At inference, the SAM 2 conditions are recomputed on the predicted clean image at a few timesteps (`sam_refresh_timesteps`), instead of relying only on masks extracted from the degraded LR input. During training, low-noise samples are conditioned on the SAM 2 outputs of the GT image with probability `clean_sam_prob · (1 - t/T)` to match it.
+    * **SICA (SAM Image Cross-Attention)**: Attends to the last stage of the SAM 2 [Hiera encoder](https://huggingface.co/docs/transformers/model_doc/hiera) on the LR image (1152 channels, 1/32 of the 1024×1024 SAM 2 input).
+    * **SMCA (SAM Masks Cross-Attention)**: Attends to the soft mask map of the LR image: the logits of the N ≤ 150 largest SAM 2 masks (point grid, stability score > 0.9), upsampled to 128×128 and aggregated by a pixel-wise maximum.
 * **Parallelized PAFB Architecture**: Introduced the *Parallel Attention Fusion Block (PAFB)*. Text, image embeddings and segmentation embeddings are now processed in **parallel** and fused via a trainable convolutional layer, streamlining the information flow compared to sequential approaches.
 * **SAM 2 Perceptual Loss**: Integrated a new perceptual loss function based on the SAM 2 feature space, supplementing the standard MSE diffusion loss to improve semantic consistency in the super-resolved output.
 * **Memory Optimization**: The architecture is optimized for consumer-grade hardware (e.g., NVIDIA RTX 4090), significantly reducing VRAM usage without compromising performance.
@@ -75,13 +74,13 @@ python test.py --config configs/test_default.yaml \
 
 SAM 2.1 weights are downloaded from the Hugging Face Hub (`facebook/sam2.1-hiera-large`) on first use.
 
-The architecture is read from the checkpoint, so `test.py` works the same for the SeeSR baseline (`--finetuned_model_path preset/models/seesr`) and for any SegESR variant. `sam_refresh_timesteps` (default `[750, 500, 250]`) sets when the SAM 2 conditions are recomputed on the predicted clean image; each refresh decodes the current estimate and runs SAM 2 once, and `--sam_refresh_timesteps` with no value disables it.
+The architecture is read from the checkpoint, so `test.py` works the same for the SeeSR baseline (`--finetuned_model_path preset/models/seesr`) and for any SegESR variant. SAM 2 runs once per image, on the LR input.
 
 ## 🌈 Train 
 #### Step 1: Prepare training data
-Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR is trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled + the first 1.5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset), which keeps the share of face images of SeeSR (LSDIR + 10K FFHQ). Put the sampled LSDIR images and the FFHQ images into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
+Pre-prepare training data pairs for the training process, which would take up some memory space but save training time. SegESR is trained with 15% of [LSDIR](https://huggingface.co/ofsoundof/LSDIR) randomly sampled + the first 5K images of [FFHQ](https://huggingface.co/datasets/marcosv/ffhq-dataset), as in the paper (Sec. 4.1). Put the sampled LSDIR images and the FFHQ images into `preset/datasets/train_datasets/LSDIR/finetune_subset`.
 
-The whole pipeline (degraded pairs, RAM tags, DAPE embeddings, SAM 2 embeddings and mask logits of the LR and GT images) can be run with:
+The whole pipeline (degraded pairs, RAM tags, DAPE embeddings, SAM 2 embeddings and mask logits of the LR images) can be run with:
 
 ```bash
 ./scripts/prepare_data.sh preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
@@ -93,11 +92,8 @@ or step by step with the scripts in `data_tools/`:
 python data_tools/make_paired_data.py --gt_path preset/datasets/train_datasets/LSDIR/finetune_subset --save_dir preset/datasets/train_datasets/LSDIR --epoch 1
 python data_tools/make_tags.py --root_path preset/datasets/train_datasets/LSDIR
 python data_tools/make_dape_embeds.py --image_dir preset/datasets/train_datasets/LSDIR/sr_bicubic --embed_dir preset/datasets/train_datasets/LSDIR/dape_embeds --ram_ft_path preset/models/DAPE.pth
-python data_tools/sam_processing.py --image_dir preset/datasets/train_datasets/LSDIR/sr_bicubic --embed_dir preset/datasets/train_datasets/LSDIR/sam_embeds --logit_dir preset/datasets/train_datasets/LSDIR/seg_embeds
-python data_tools/sam_processing.py --image_dir preset/datasets/train_datasets/LSDIR/gt --embed_dir preset/datasets/train_datasets/LSDIR/sam_embeds_gt --logit_dir preset/datasets/train_datasets/LSDIR/seg_embeds_gt
+python data_tools/sam_processing.py --image_dir preset/datasets/train_datasets/LSDIR/lr --embed_dir preset/datasets/train_datasets/LSDIR/sam_embeds --logit_dir preset/datasets/train_datasets/LSDIR/seg_embeds
 ```
-
-The last step (SAM 2 on the GT images) is only needed by `clean_sam_prob > 0`; skip it in `prepare_data.sh` with `WITH_GT_SAM=false`.
 
 - `--gt_path` the path of gt images. If you have multi gt dirs, you can set it as `PATH1 PATH2 PATH3 ...`
 - `--save_dir` the path of paired images 
@@ -120,35 +116,35 @@ your_training_datasets/
     └── dape_embeds
         └── 0000001.pt  # DAPE image embeddings
     └── sam_embeds
-        └── 0000001.pt  # SAM 2 image embeddings, (1, 256, 64, 64)
+        └── 0000001.pt  # last Hiera stage of SAM 2 on the LR image, (1, 1152, 32, 32)
     └── seg_embeds
-        └── 0000001.pt  # SAM 2 mask decoder logits, (N, 1, 256, 256)
-    └── sam_embeds_gt   # (optional, for clean_sam_prob) as sam_embeds, on the GT image
-    └── seg_embeds_gt   # (optional, for clean_sam_prob) as seg_embeds, on the GT image
+        └── 0000001.pt  # SAM 2 mask decoder logits on the LR image, (N, 1, 256, 256)
 ```
 
 
 #### Step 2: Training SegESR
 
+SegESR is trained in two stages, as in the ECCV 2026 paper:
+
 ```bash
-./scripts/run_train.sh configs/train_segesr.yaml    # full SegESR
-./scripts/run_train.sh configs/train_seesr.yaml     # SeeSR baseline, fine-tuned with the same data and settings
+./scripts/run_train.sh configs/train_segesr.yaml          # stage 1: new modules only, 20K steps, lr 9e-7
+./scripts/run_train.sh configs/train_segesr_stage2.yaml   # stage 2: + DAPE attentions, 28K steps, lr 2e-7 / 5e-7
+./scripts/run_train.sh configs/train_seesr.yaml           # SeeSR baseline, fine-tuned on the same data
 ```
 
-Every key of the YAML config is a `train.py` argument, and flags passed on the command line override the config (e.g. `--max_train_steps=1000`). `configs/train_segesr.yaml` only adds the SegESR components to `configs/train_seesr.yaml` (`base_config` key), so each component can be switched on one at a time, starting from the baseline:
+Both stages use batch 1 × 4 accumulation steps, bf16 and the SAM 2 perceptual loss with λ = 0.1, computed on the SD VAE decoding of the predicted x₀; stage 2 starts from the last stage 1 checkpoint. The training data is a random 15% of LSDIR plus the first 5K FFHQ images.
 
-| Step | Component | Training flags added to `configs/train_seesr.yaml` |
+Details the paper leaves open, and how the code fills them: SMCA reads the 128×128 map as 128 tokens (one per row); H×W of Eq. 3 is 128×128 at test time too, whatever the LR size; the SAM 2 loss compares the SAM 2 image encoder outputs (after the FPN neck) as a mean squared error, like the diffusion loss; the SAM 2 attentions start from the DAPE attention weights (zero-padded to 1152 input channels for SICA); the fusion conv starts as the average of its four branches; the "pre-trained layers" of stage 2 are the DAPE attentions. Every key of the YAML config is a `train.py` argument, and flags passed on the command line override the config (e.g. `--max_train_steps=1000`). The SegESR configs add the SegESR components to `configs/train_seesr.yaml` (`base_config` key), so each component can be switched on one at a time, as in the ablation of the paper:
+
+| Variant | Component | Training flags added to `configs/train_seesr.yaml` |
 |---|---|---|
-| 0 | SeeSR baseline (text → DAPE attention, sequential) | — |
-| 1 | PAFB: parallel attentions + fusion conv | `--attention_fusion=parallel` |
-| 2 | + SICA (SAM 2 image embeddings) | step 1 + `--use_sam2_image_attention` |
-| 3 | + SMCA (SAM 2 segment tokens) | step 2 + `--use_sam2_segmentation_attention` |
-| 4 | + segment routing | step 3 + `--segment_routing` |
-| 5 | + SAM 2 perceptual loss | step 4 + `--use_sam_loss` |
-| 6 | + GT-derived SAM 2 conditions = full SegESR | step 5 + `--clean_sam_prob=0.5` |
-| 7 | + SAM 2 refresh at inference | test-time `sam_refresh_timesteps` (on by default; `--sam_refresh_timesteps` alone disables it) |
+| SeeSR | text → DAPE attention, sequential | — |
+| V1 | PAFB: parallel attentions + fusion conv | `--attention_fusion=parallel` |
+| V2 | + SICA (SAM 2 image embeddings) | V1 + `--use_sam2_image_attention` |
+| V3 | + SMCA (SAM 2 mask logits) | V2 + `--use_sam2_segmentation_attention` |
+| SegESR | + SAM 2 perceptual loss | V3 + `--use_sam_loss` |
 
-Give each run its own `--output_dir`. The architecture flags are stored in the checkpoint configs, and `test.py` rebuilds the model from them. The SAM 2 branches start with zero weight in the fusion conv, so every SAM 2 variant starts exactly from the PAFB model.
+Give each run its own `--output_dir`. The architecture flags are stored in the checkpoint configs, and `test.py` rebuilds the model from them. The fusion conv starts as the average of its branches.
 
 ## 🖥️ SLURM cluster
 
@@ -159,8 +155,9 @@ sbatch cluster/setup_env.sh                                   # once: container,
 sbatch cluster/download_models.sh                             # once: SD 2 base, SeeSR + DAPE, RAM, tiny VAE
 sbatch cluster/download_datasets.sh                           # once: test sets, LSDIR + FFHQ training subset
 sbatch cluster/prepare_data.sh preset/datasets/train_datasets/LSDIR/finetune_subset preset/datasets/train_datasets/LSDIR
-sbatch cluster/train.sh configs/train_segesr.yaml
-sbatch cluster/test.sh preset/train_output/segesr_v2
+sbatch cluster/train.sh configs/train_segesr.yaml           # stage 1
+sbatch cluster/train.sh configs/train_segesr_stage2.yaml    # stage 2, after stage 1
+sbatch cluster/test.sh preset/train_output/segesr_eccv
 ```
 
 Edit the `#SBATCH` lines (partition, QOS, memory) for another cluster.

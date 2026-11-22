@@ -122,8 +122,7 @@ def main(args):
     uses_sam2 = model_uses_sam2(config)
     print(
         f"Model: attention_fusion={config.attention_fusion}, SICA={config.use_sam2_image_attention}, "
-        f"SMCA={config.use_sam2_segmentation_attention}, segment_routing={config.segment_routing}, "
-        f"SAM 2 refresh={args.sam_refresh_timesteps if uses_sam2 and args.sam_refresh_timesteps else 'off'}"
+        f"SMCA={config.use_sam2_segmentation_attention}"
     )
 
     sam_generator = None
@@ -199,7 +198,6 @@ def main(args):
                             start_steps=args.start_steps, start_point=args.start_point, ram_encoder_hidden_states=ram_encoder_hidden_states,
                             sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
                             sam2_encoder_hidden_states=sam2_encoder_hidden_states,
-                            sam_generator=sam_generator, sam_refresh_timesteps=args.sam_refresh_timesteps,
                             latent_tiled_size=args.latent_tiled_size, latent_tiled_overlap=args.latent_tiled_overlap,
                             args=args,
                         ).images[0]
@@ -221,9 +219,6 @@ def parse_args(input_args=None):
     parser.add_argument("--ram_path", type=str, default="preset/models/ram_swin_large_14m.pth")
     parser.add_argument("--ram_ft_path", type=str, default=None, help="Path to the DAPE weights.")
     parser.add_argument("--sam_model_size", type=str, default="large", choices=["tiny", "small", "base_plus", "large"])
-    parser.add_argument("--sam_refresh_timesteps", type=int, nargs="*", default=None,
-                        help="Diffusion timesteps (e.g. 750 500 250) at which the SAM 2 conditions are recomputed on the predicted clean image"
-                             " (models with SAM 2 attentions only). Pass the flag without values to disable it.")
     parser.add_argument("--prompt", type=str, default="") # user can add self-prompt to improve the results
     parser.add_argument("--added_prompt", type=str, default="clean, high-resolution, 8k")
     parser.add_argument("--negative_prompt", type=str, default="dotted, noise, blur, lowres, smooth")

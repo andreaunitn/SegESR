@@ -15,7 +15,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 from diffusers.utils import is_torch_version, logging
@@ -29,53 +28,22 @@ from diffusers.models.transformer_2d import Transformer2DModel
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
-# Attention bias of a pixel towards a segment it does not overlap (log of a zero coverage).
-SEGMENT_BIAS_FLOOR = -1e4
-
-def segment_routed_attention(attn, hidden_states, segment_tokens, segment_masks=None, cross_attention_kwargs=None):
-    """
-    SAM 2 segmentation cross-attention (SMCA). Every pixel of `hidden_states` (B, C, H, W) attends to the
-    segment tokens (B, K, C_seg) built by `build_segment_conditions`. When the binary `segment_masks`
-    (B, K, h, w) are given, they are average-pooled to (H, W) and the log of the resulting coverage is added
-    to the attention logits: each pixel attends only to the segments overlapping it, weighted by how much of
-    the pixel they cover. Without masks, the attention is unrestricted.
-    """
-
-    encoder_attention_mask = None
-    if segment_masks is not None:
-        coverage = F.adaptive_avg_pool2d(segment_masks.float(), hidden_states.shape[-2:])
-        # (B, K, H, W) -> (B, H*W, K), the query order of Transformer2DModel
-        encoder_attention_mask = coverage.log().clamp_min(SEGMENT_BIAS_FLOOR).flatten(2).transpose(1, 2)
-        encoder_attention_mask = encoder_attention_mask.to(hidden_states.dtype).contiguous()
-
-    return attn(
-        hidden_states,
-        encoder_hidden_states=segment_tokens,
-        cross_attention_kwargs=cross_attention_kwargs,
-        encoder_attention_mask=encoder_attention_mask,
-        return_dict=False,
-    )[0]
-
-
 ATTENTION_FUSIONS = ("sequential", "parallel")
 
+# Channels of the last Hiera stage of SAM 2.1 large (Eq. 2 of the paper): the SICA context.
+SAM2_IMAGE_EMBED_DIM = 1152
+# Side of the aggregated mask map (Eq. 3): H x W = 128 x 128, the LR size of the x4 protocol. SMCA reads it as
+# 128 tokens (one per row) of 128 values.
+SAM2_MASK_MAP_SIZE = 128
 
-def check_sam2_conditions(config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, sam2_segmentation_masks):
-    """
-    Checks that a UNet/ControlNet received the SAM 2 conditions its config needs, and returns the segment
-    masks to use: the given ones with `segment_routing`, None otherwise.
-    """
+
+def check_sam2_conditions(config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states):
+    """Checks that a UNet/ControlNet received the SAM 2 conditions its config needs."""
 
     if config.use_sam2_image_attention and sam2_encoder_hidden_states is None:
         raise ValueError("`use_sam2_image_attention` requires `sam2_encoder_hidden_states`.")
     if config.use_sam2_segmentation_attention and sam2_segmentation_encoder_hidden_states is None:
         raise ValueError("`use_sam2_segmentation_attention` requires `sam2_segmentation_encoder_hidden_states`.")
-
-    if not (config.use_sam2_segmentation_attention and config.segment_routing):
-        return None
-    if sam2_segmentation_masks is None:
-        raise ValueError("`segment_routing` requires `sam2_segmentation_masks`.")
-    return sam2_segmentation_masks
 
 
 class SegESRCrossAttentionMixin:
@@ -86,8 +54,12 @@ class SegESRCrossAttentionMixin:
     - "sequential" fusion (SeeSR): TCA, then RCA on its output.
     - "parallel" fusion (PAFB): TCA, RCA and the optional SAM 2 image (SICA, `sam2_image_attentions`) and
       segmentation (SMCA, `sam2_segmentation_attentions`) attentions read the same input, and a 3x3 conv
-      (`fusion_conv`, one per block) fuses their outputs. The conv starts as the average of TCA and RCA with
-      zero weight on the SAM 2 branches, so the SAM 2 branches start without any influence.
+      (`fusion_conv`, one per block) fuses their outputs. The conv starts as the average of all its branches,
+      as in the ECCV 2026 model.
+
+    As in the ECCV 2026 paper (Sec. 3.1-3.2): SICA attends to the last Hiera stage (Eq. 2), one token per
+    position; SMCA attends to the pixel-wise maximum of the N upsampled mask logits (Eq. 3), one token per row
+    of the map (see `seg_logits_to_tokens` in `segesr/utils/sam_utils.py`).
     """
 
     def _init_segesr_attentions(
@@ -118,9 +90,9 @@ class SegESRCrossAttentionMixin:
         if use_image_cross_attention:
             self.image_attentions = nn.ModuleList([make_attention(image_cross_attention_dim) for _ in range(num_layers)])
         if use_sam2_image_attention:
-            self.sam2_image_attentions = nn.ModuleList([make_attention(sam2_cross_attention_dim) for _ in range(num_layers)])
+            self.sam2_image_attentions = nn.ModuleList([make_attention(SAM2_IMAGE_EMBED_DIM) for _ in range(num_layers)])
         if use_sam2_segmentation_attention:
-            self.sam2_segmentation_attentions = nn.ModuleList([make_attention(sam2_cross_attention_dim) for _ in range(num_layers)])
+            self.sam2_segmentation_attentions = nn.ModuleList([make_attention(SAM2_MASK_MAP_SIZE) for _ in range(num_layers)])
 
         if use_image_cross_attention and attention_fusion == "parallel":
             num_branches = 2 + int(use_sam2_image_attention) + int(use_sam2_segmentation_attention)
@@ -130,8 +102,8 @@ class SegESRCrossAttentionMixin:
                 self.fusion_conv.weight.zero_()
                 self.fusion_conv.bias.zero_()
                 index = torch.arange(channels)
-                self.fusion_conv.weight[index, index, 1, 1] = 0.5             # TCA
-                self.fusion_conv.weight[index, index + channels, 1, 1] = 0.5  # RCA
+                for branch in range(num_branches):
+                    self.fusion_conv.weight[index, index + branch * channels, 1, 1] = 1.0 / num_branches
 
     def _resnet(self, resnet, hidden_states, temb):
         if self.training and self.gradient_checkpointing:
@@ -146,7 +118,6 @@ class SegESRCrossAttentionMixin:
         image_encoder_hidden_states=None,
         sam2_encoder_hidden_states=None,
         sam2_segmentation_encoder_hidden_states=None,
-        sam2_segmentation_masks=None,
         attention_mask=None,
         encoder_attention_mask=None,
         cross_attention_kwargs=None,
@@ -176,15 +147,7 @@ class SegESRCrossAttentionMixin:
                 sam2_tokens = sam2_encoder_hidden_states.flatten(2).transpose(1, 2).contiguous()
                 branches.append(attend(self.sam2_image_attentions[i], hidden_states, sam2_tokens))
             if self.use_sam2_segmentation_attention:
-                branches.append(
-                    segment_routed_attention(
-                        self.sam2_segmentation_attentions[i],
-                        hidden_states,
-                        sam2_segmentation_encoder_hidden_states,
-                        sam2_segmentation_masks,
-                        cross_attention_kwargs,
-                    )
-                )
+                branches.append(attend(self.sam2_segmentation_attentions[i], hidden_states, sam2_segmentation_encoder_hidden_states))
             return self.fusion_conv(torch.cat(branches, dim=1))
 
         if self.training and self.gradient_checkpointing:
@@ -817,14 +780,12 @@ class UNetMidBlock2DCrossAttn(SegESRCrossAttentionMixin, nn.Module):
         image_encoder_hidden_states: Optional[torch.FloatTensor] = None,
         sam2_encoder_hidden_states: Optional[torch.FloatTensor] = None,
         sam2_segmentation_encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        sam2_segmentation_masks: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
         conditions = dict(
             encoder_hidden_states=encoder_hidden_states,
             image_encoder_hidden_states=image_encoder_hidden_states,
             sam2_encoder_hidden_states=sam2_encoder_hidden_states,
             sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-            sam2_segmentation_masks=sam2_segmentation_masks,
             attention_mask=attention_mask,
             encoder_attention_mask=encoder_attention_mask,
             cross_attention_kwargs=cross_attention_kwargs,
@@ -1185,14 +1146,12 @@ class CrossAttnDownBlock2D(SegESRCrossAttentionMixin, nn.Module):
         image_encoder_hidden_states: Optional[torch.FloatTensor] = None,
         sam2_encoder_hidden_states: Optional[torch.FloatTensor] = None,
         sam2_segmentation_encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        sam2_segmentation_masks: Optional[torch.FloatTensor] = None,
     ):
         conditions = dict(
             encoder_hidden_states=encoder_hidden_states,
             image_encoder_hidden_states=image_encoder_hidden_states,
             sam2_encoder_hidden_states=sam2_encoder_hidden_states,
             sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-            sam2_segmentation_masks=sam2_segmentation_masks,
             attention_mask=attention_mask,
             encoder_attention_mask=encoder_attention_mask,
             cross_attention_kwargs=cross_attention_kwargs,
@@ -2305,14 +2264,12 @@ class CrossAttnUpBlock2D(SegESRCrossAttentionMixin, nn.Module):
         image_encoder_hidden_states: Optional[torch.FloatTensor] = None,
         sam2_encoder_hidden_states: Optional[torch.FloatTensor] = None,
         sam2_segmentation_encoder_hidden_states: Optional[torch.FloatTensor] = None,
-        sam2_segmentation_masks: Optional[torch.FloatTensor] = None,
     ):
         conditions = dict(
             encoder_hidden_states=encoder_hidden_states,
             image_encoder_hidden_states=image_encoder_hidden_states,
             sam2_encoder_hidden_states=sam2_encoder_hidden_states,
             sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-            sam2_segmentation_masks=sam2_segmentation_masks,
             attention_mask=attention_mask,
             encoder_attention_mask=encoder_attention_mask,
             cross_attention_kwargs=cross_attention_kwargs,

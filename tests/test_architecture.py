@@ -14,12 +14,13 @@ from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_blocks import CrossAttnDownBlock2D
 from segesr.models.unet_2d_condition import UNet2DConditionModel
 from segesr.utils.config import load_config
-from segesr.utils.sam_utils import build_segment_conditions
+from segesr.models.unet_2d_blocks import SAM2_IMAGE_EMBED_DIM, SAM2_MASK_MAP_SIZE
+from segesr.utils.sam_utils import MASK_MAP_SIZE, aggregate_mask_logits, seg_logits_to_tokens
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 PAFB = dict(attention_fusion="parallel")
-FULL = dict(attention_fusion="parallel", use_sam2_image_attention=True, use_sam2_segmentation_attention=True, segment_routing=True)
+FULL = dict(attention_fusion="parallel", use_sam2_image_attention=True, use_sam2_segmentation_attention=True)
 
 def make_unet(**architecture):
     return UNet2DConditionModel(
@@ -37,8 +38,8 @@ def make_unet(**architecture):
 
 def unet_inputs():
     generator = torch.Generator().manual_seed(0)
-    embeds = torch.randn(1, 256, 64, 64, generator=generator)
-    tokens, masks = build_segment_conditions(embeds, torch.randn(1, 5, 256, 256, generator=generator) * 5, (16, 16))
+    embeds = torch.randn(1, SAM2_IMAGE_EMBED_DIM, 32, 32, generator=generator)
+    tokens = seg_logits_to_tokens(torch.randn(1, 5, 256, 256, generator=generator) * 5)
     return dict(
         sample=torch.randn(1, 4, 16, 16, generator=generator),
         timestep=torch.tensor([500]),
@@ -46,7 +47,6 @@ def unet_inputs():
         image_encoder_hidden_states=torch.randn(1, 4, 512, generator=generator),
         sam2_encoder_hidden_states=embeds,
         sam2_segmentation_encoder_hidden_states=tokens,
-        sam2_segmentation_masks=masks,
     )
 
 def test_sequential_fusion_is_seesr():
@@ -69,36 +69,56 @@ def test_sequential_fusion_is_seesr():
     torch.testing.assert_close(output, expected)
     assert not hasattr(block, "fusion_conv")
 
-def test_pafb_fusion_starts_as_average_of_text_and_dape():
-    block = make_unet(**PAFB).down_blocks[0]
+@pytest.mark.parametrize("architecture, num_branches", [
+    (PAFB, 2),
+    (dict(PAFB, use_sam2_image_attention=True), 3),
+    (dict(PAFB, use_sam2_segmentation_attention=True), 3),
+    (FULL, 4),
+], ids=["pafb", "sica", "smca", "full"])
+def test_pafb_fusion_starts_as_average_of_its_branches(architecture, num_branches):
+    """As in the ECCV 2026 model, the fusion conv starts as the plain average of all the attention branches."""
+
+    block = make_unet(**architecture).down_blocks[0]
     weight, channels = block.fusion_conv.weight, block.fusion_conv.out_channels
     index = torch.arange(channels)
 
-    assert weight.shape[1] == 2 * channels
-    assert torch.all(weight[index, index, 1, 1] == 0.5) and torch.all(weight[index, index + channels, 1, 1] == 0.5)
-    assert weight.abs().sum() == channels  # nothing else
+    assert weight.shape[1] == num_branches * channels
+    for branch in range(num_branches):
+        assert torch.all(weight[index, index + branch * channels, 1, 1] == 1.0 / num_branches)
+    assert torch.isclose(weight.abs().sum(), torch.tensor(float(channels)))  # nothing else
     assert torch.all(block.fusion_conv.bias == 0)
 
-@pytest.mark.parametrize("architecture", [
-    dict(PAFB, use_sam2_image_attention=True),
-    dict(PAFB, use_sam2_segmentation_attention=True),
-    FULL,
-], ids=["sica", "smca", "full"])
-def test_sam2_components_start_without_influence(architecture):
-    """With the same shared weights, adding SAM 2 attentions does not change the PAFB output at initialization."""
+def test_smca_attends_to_one_token_per_logit_row():
+    """SMCA reads the aggregated 128x128 mask map as 128 row tokens: one more mask changes the output."""
 
-    pafb, model = make_unet(**PAFB), make_unet(**architecture)
+    torch.manual_seed(0)
+    unet, inputs = make_unet(**FULL), unet_inputs()
+    assert inputs["sam2_segmentation_encoder_hidden_states"].shape == (1, 128, 128)
 
-    model.load_state_dict({k: v for k, v in pafb.state_dict().items() if "fusion_conv.weight" not in k}, strict=False)
-    pafb_modules = dict(pafb.named_modules())
+    more = torch.randn(1, 6, 256, 256) * 5
     with torch.no_grad():
-        for name, module in model.named_modules():
-            if hasattr(module, "fusion_conv"):
-                text_dape_weight = pafb_modules[name].fusion_conv.weight
-                module.fusion_conv.weight[:, : text_dape_weight.shape[1]] = text_dape_weight
+        output = unet(**inputs).sample
+        other = unet(**{**inputs, "sam2_segmentation_encoder_hidden_states": seg_logits_to_tokens(more)}).sample
+    assert output.shape == other.shape and not torch.allclose(output, other)
 
-        inputs = unet_inputs()
-        torch.testing.assert_close(model(**inputs).sample, pafb(**inputs).sample)
+def test_mask_logits_are_aggregated_as_in_eq_3():
+    """Bilinear upsampling to H x W, then pixel-wise maximum over the N masks; padding maps are ignored."""
+
+    assert MASK_MAP_SIZE == SAM2_MASK_MAP_SIZE == 128
+
+    logits = torch.full((1, 3, 256, 256), -5.0)
+    logits[0, 0, :128] = 4.0      # top half
+    logits[0, 1, :, :128] = 2.0   # left half
+    logits[0, 2] = 0.0            # batch padding: all zeros
+    aggregated = aggregate_mask_logits(logits)
+
+    assert aggregated.shape == (1, 128, 128)
+    assert aggregated[0, 10, 100] == 4.0    # top right: mask 0
+    assert aggregated[0, 100, 10] == 2.0    # bottom left: mask 1
+    assert aggregated[0, 100, 100] == -5.0  # bottom right: no mask, the padding map (0) is not the maximum
+    torch.testing.assert_close(seg_logits_to_tokens(logits), aggregated)
+
+    assert torch.all(aggregate_mask_logits(torch.zeros(2, 4, 256, 256)) == 0)  # no mask at all
 
 def test_architecture_is_saved_with_the_checkpoint(tmp_path):
     torch.manual_seed(0)
@@ -126,34 +146,43 @@ def test_invalid_architectures_are_rejected():
 
 def test_missing_sam2_inputs_are_rejected():
     inputs = unet_inputs()
-    with pytest.raises(ValueError, match="sam2_segmentation_masks"):
-        make_unet(**FULL)(**{**inputs, "sam2_segmentation_masks": None})
+    with pytest.raises(ValueError, match="sam2_segmentation_encoder_hidden_states"):
+        make_unet(**FULL)(**{**inputs, "sam2_segmentation_encoder_hidden_states": None})
     with pytest.raises(ValueError, match="sam2_encoder_hidden_states"):
         make_unet(**FULL)(**{**inputs, "sam2_encoder_hidden_states": None})
 
-    # A model without segment routing ignores the masks
-    no_routing = make_unet(**{**FULL, "segment_routing": False})
-    with torch.no_grad():
-        torch.testing.assert_close(no_routing(**inputs).sample, no_routing(**{**inputs, "sam2_segmentation_masks": None}).sample)
+def test_segesr_configs_follow_the_paper():
+    """Stage 1 and stage 2 of the ECCV 2026 training (Sec. 4.1), on top of the SeeSR baseline config."""
 
-def test_segesr_config_builds_on_the_seesr_config():
     seesr = load_config(REPO_ROOT / "configs" / "train_seesr.yaml")
-    segesr = load_config(REPO_ROOT / "configs" / "train_segesr.yaml")
+    stage1 = load_config(REPO_ROOT / "configs" / "train_segesr.yaml")
+    stage2 = load_config(REPO_ROOT / "configs" / "train_segesr_stage2.yaml")
 
     assert seesr["attention_fusion"] == "sequential"
-    assert not any(seesr[key] for key in ("use_sam2_image_attention", "use_sam2_segmentation_attention", "segment_routing", "use_sam_loss"))
-    for key, value in FULL.items():
-        assert segesr[key] == value
-    assert segesr["use_sam_loss"] and segesr["clean_sam_prob"] > 0
+    assert not any(seesr[key] for key in ("use_sam2_image_attention", "use_sam2_segmentation_attention", "use_sam_loss"))
 
-    # Every other setting is shared, so the two runs differ only by the SegESR components
-    components = set(FULL) | {"use_sam_loss", "clean_sam_prob", "output_dir"}
-    assert {k: v for k, v in seesr.items() if k not in components} == {k: v for k, v in segesr.items() if k not in components}
-    assert "base_config" not in segesr
+    for stage in (stage1, stage2):
+        for key, value in FULL.items():
+            assert stage[key] == value
+        assert stage["use_sam_loss"] and stage["sam_loss_weight"] == 0.1
+        assert stage["train_batch_size"] == 1 and stage["gradient_accumulation_steps"] == 4
+        assert "base_config" not in stage
+
+    # Stage 1: only the new modules, 20K steps at 9e-7
+    assert stage1["max_train_steps"] == 20000 and stage1["finetune_lr"] == 9.0e-7
+    assert not stage1["train_unet_dape_attention"] and not stage1["train_controlnet_dape_attention"]
+    assert stage1["init_sam_from_dape"]
+
+    # Stage 2: everything, 28K steps from the last stage 1 checkpoint, 2e-7 (SeeSR) and 5e-7 (new)
+    assert stage2["max_train_steps"] == 28000
+    assert stage2["learning_rate"] == 2.0e-7 and stage2["finetune_lr"] == 5.0e-7
+    assert stage2["train_unet_dape_attention"] and stage2["train_controlnet_dape_attention"]
+    assert not stage2["init_sam_from_dape"]
+    stage1_last = f"{stage1['output_dir']}/checkpoint-{stage1['max_train_steps']}"
+    assert stage2["seesr_model_path"] == stage2["controlnet_model_name_or_path"] == stage1_last
+    assert stage2["output_dir"] != stage1["output_dir"]
 
 def test_resuming_a_checkpoint_with_another_architecture_fails(tmp_path):
-    """Routing on/off has identical parameters: without the check, a run would silently resume another variant."""
-
     from accelerate import Accelerator
     from segesr.utils.checkpoint_utils import register_checkpoint_hooks
 
@@ -170,6 +199,6 @@ def test_resuming_a_checkpoint_with_another_architecture_fails(tmp_path):
     accelerator, _ = prepared(**FULL)
     accelerator.load_state(tmp_path / "checkpoint-10")  # same architecture: fine
 
-    accelerator, _ = prepared(**{**FULL, "segment_routing": False})
-    with pytest.raises(ValueError, match="segment_routing"):
+    accelerator, _ = prepared(**{**FULL, "use_sam2_segmentation_attention": False})
+    with pytest.raises(ValueError, match="use_sam2_segmentation_attention"):
         accelerator.load_state(tmp_path / "checkpoint-10")

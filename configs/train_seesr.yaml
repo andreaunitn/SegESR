@@ -17,7 +17,6 @@ ram_ft_path: preset/models/DAPE.pth
 attention_fusion: sequential   # 'parallel' = PAFB
 use_sam2_image_attention: false
 use_sam2_segmentation_attention: false
-segment_routing: false
 
 # ---------------------------------------------------------------- Data & output
 root_folders: preset/datasets/train_datasets/LSDIR
@@ -65,7 +64,6 @@ init_sam_from_dape: true
 
 # ---------------------------------------------------------------- SAM 2 & losses
 sam_model_size: large
-clean_sam_prob: 0.0
 use_sam_loss: false
 sam_loss_weight: 0.1
 use_lpips_loss: false

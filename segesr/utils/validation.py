@@ -26,37 +26,15 @@ def image_grid(imgs, rows, cols):
 
     return grid
 
-def get_sam_kwargs(batch, device, dtype, config, mask_size, use_clean=None):
+def get_sam_kwargs(batch, device, dtype, config):
     """
     Builds, from a training batch, the SAM 2 inputs of a SegESR UNet/ControlNet with config `config`
     (an empty dict for a model without SAM 2 attentions).
-
-    Args:
-        mask_size (tuple): (h, w) latent resolution of the segment masks.
-        use_clean (torch.BoolTensor, optional): (B,) samples that use the SAM 2 conditions of the GT
-            image ('sam_img_embeds_gt' / 'sam_seg_embeds_gt') instead of the ones of the LR image.
     """
 
     if not model_uses_sam2(config):
         return {}
-
-    img_embeds = batch["sam_img_embeds"].to(device)
-    seg_logits = batch["sam_seg_embeds"].to(device)
-
-    if use_clean is not None and use_clean.any():
-        clean_img_embeds = batch["sam_img_embeds_gt"].to(device)
-        clean_seg_logits = batch["sam_seg_embeds_gt"].to(device)
-
-        # Pad both mask sets to the same number of (all-zero, i.e. empty) masks before selecting
-        num_masks = max(seg_logits.shape[1], clean_seg_logits.shape[1])
-        seg_logits = F.pad(seg_logits, (0, 0, 0, 0, 0, num_masks - seg_logits.shape[1]))
-        clean_seg_logits = F.pad(clean_seg_logits, (0, 0, 0, 0, 0, num_masks - clean_seg_logits.shape[1]))
-
-        select = use_clean.to(device)[:, None, None, None]
-        img_embeds = torch.where(select, clean_img_embeds, img_embeds)
-        seg_logits = torch.where(select, clean_seg_logits, seg_logits)
-
-    return sam2_model_kwargs(config, img_embeds, seg_logits, mask_size, dtype)
+    return sam2_model_kwargs(config, batch["sam_img_embeds"].to(device), batch["sam_seg_embeds"].to(device), dtype)
 
 @torch.no_grad()
 def prepare_validation_conditions(image_path, ram_model, sam_generator, device):

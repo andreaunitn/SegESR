@@ -20,8 +20,6 @@ class PairedCaptionDataset(data.Dataset):
         dape_embeds/<stem>.pt    DAPE image embeddings
         sam_embeds/<stem>.pt     SAM 2 image embeddings (1, 256, 64, 64)
         seg_embeds/<stem>.pt     SAM 2 mask decoder logits (N, 1, 256, 256)
-        sam_embeds_gt/<stem>.pt  (optional) SAM 2 image embeddings of the GT image
-        seg_embeds_gt/<stem>.pt  (optional) SAM 2 mask decoder logits of the GT image
         gt_seg/<stem>.pt         (optional) SAM 2 binary masks of the GT image
 
     The SAM 2 files are only read with `load_sam` (models with SAM 2 attentions).
@@ -48,8 +46,6 @@ class PairedCaptionDataset(data.Dataset):
         self.sam_seg_embeds_list = []
         self.dape_img_embeds_list = []
         self.gt_seg_list = []
-        self.sam_img_embeds_gt_list = []
-        self.sam_seg_embeds_gt_list = []
 
         self.validation = validation
 
@@ -63,7 +59,6 @@ class PairedCaptionDataset(data.Dataset):
             gt_paths = sorted(glob.glob(os.path.join(root_folder, 'gt', '*.png')))
             gt_seg_dir = os.path.join(root_folder, 'gt_seg')
             has_gt_seg = os.path.isdir(gt_seg_dir)
-            has_gt_sam = load_sam and all(os.path.isdir(os.path.join(root_folder, d)) for d in ('sam_embeds_gt', 'seg_embeds_gt'))
 
             for gt_path in gt_paths:
                 stem = Path(gt_path).stem
@@ -78,10 +73,6 @@ class PairedCaptionDataset(data.Dataset):
                 if has_gt_seg:
                     self.gt_seg_list.append(self._require(root_folder, 'gt_seg', stem, '.pt'))
 
-                if has_gt_sam:
-                    self.sam_img_embeds_gt_list.append(self._require(root_folder, 'sam_embeds_gt', stem, '.pt'))
-                    self.sam_seg_embeds_gt_list.append(self._require(root_folder, 'seg_embeds_gt', stem, '.pt'))
-
             if self.validation:
                 self.val_list += sorted(glob.glob(os.path.join(root_folder, 'validation', 'HR', 'val', '*.png')))
 
@@ -90,9 +81,6 @@ class PairedCaptionDataset(data.Dataset):
 
         if self.gt_seg_list and len(self.gt_seg_list) != len(self.gt_list):
             raise ValueError("'gt_seg' exists only for some of the root folders. Provide it for all of them or for none.")
-
-        if self.sam_seg_embeds_gt_list and len(self.sam_seg_embeds_gt_list) != len(self.gt_list):
-            raise ValueError("'sam_embeds_gt'/'seg_embeds_gt' exist only for some of the root folders. Provide them for all of them or for none.")
 
         self.img_preproc = transforms.Compose([
             transforms.ToTensor(),
@@ -103,11 +91,6 @@ class PairedCaptionDataset(data.Dataset):
         self.ram_normalize = transforms.Normalize(mean=ram_mean, std=ram_std)
 
         self.tokenizer = tokenizer
-
-    @property
-    def has_gt_sam(self):
-        """Whether the SAM 2 conditions of the GT images are available."""
-        return len(self.sam_seg_embeds_gt_list) > 0
 
     @staticmethod
     def _require(root_folder, sub_dir, stem, ext):
@@ -154,10 +137,6 @@ class PairedCaptionDataset(data.Dataset):
             example["sam_img_embeds"] = torch.load(self.sam_img_embeds_list[index], map_location="cpu").squeeze(0)
             example["sam_seg_embeds"] = torch.load(self.sam_seg_embeds_list[index], map_location="cpu").squeeze(1)
 
-        if self.has_gt_sam:
-            example["sam_img_embeds_gt"] = torch.load(self.sam_img_embeds_gt_list[index], map_location="cpu").squeeze(0)
-            example["sam_seg_embeds_gt"] = torch.load(self.sam_seg_embeds_gt_list[index], map_location="cpu").squeeze(1)
-
         if self.gt_seg_list:
             example["sam_gt_seg"] = torch.load(self.gt_seg_list[index], map_location="cpu")
 
@@ -178,7 +157,7 @@ def collate_fn(examples):
     batch = {}
     for key in examples[0]:
         values = [example[key] for example in examples]
-        if key in ("sam_seg_embeds", "sam_seg_embeds_gt"):
+        if key == "sam_seg_embeds":
             batch[key] = pad_seg_logits(values)
         elif key == "sam_gt_seg":
             batch[key] = values

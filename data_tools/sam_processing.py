@@ -23,11 +23,11 @@ def process_dataset(args):
     """
     Precomputes the SAM 2 data used by SegESR for all images inside `--image_dir`:
 
-    - `--embed_dir`: Hiera image embeddings, (1, 256, 64, 64) per image  -> training folder 'sam_embeds/'
-    - `--logit_dir`: mask decoder logits, (N, 1, 256, 256) per image   -> training folder 'seg_embeds/'
-    - `--mask_dir`:  binary masks, (N, H, W) per image                  -> training folder 'gt_seg/' (optional)
+    - `--embed_dir`: last Hiera stage, (1, 1152, 32, 32) per image  -> training folder 'sam_embeds/'
+    - `--logit_dir`: mask decoder logits, (N, 1, 256, 256) per image -> training folder 'seg_embeds/'
+    - `--mask_dir`:  binary masks, (N, H, W) per image                -> training folder 'gt_seg/' (optional)
 
-    Embeddings and logits are computed on the bicubic-upsampled LR images ('sr_bicubic/'),
+    As in the paper (Sec. 3.1), embeddings and logits are computed on the LR images ('lr/'),
     binary masks on the GT images ('gt/').
     """
 

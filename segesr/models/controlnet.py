@@ -213,7 +213,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
         attention_fusion: str = "sequential",
         use_sam2_image_attention: bool = False,
         use_sam2_segmentation_attention: bool = False,
-        segment_routing: bool = False,
     ):
         super().__init__()
 
@@ -490,7 +489,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
             attention_fusion=unet.config.attention_fusion,
             use_sam2_image_attention=unet.config.use_sam2_image_attention,
             use_sam2_segmentation_attention=unet.config.use_sam2_segmentation_attention,
-            segment_routing=unet.config.segment_routing,
         )
 
         if load_weights_from_unet:
@@ -660,7 +658,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
         image_encoder_hidden_states: torch.Tensor = None,
         sam2_encoder_hidden_states: torch.Tensor = None,
         sam2_segmentation_encoder_hidden_states: torch.Tensor = None,
-        sam2_segmentation_masks: torch.Tensor = None,
         vae_encode_condition_hidden_states: torch.Tensor = None, 
     ) -> Union[ControlNetOutput, Tuple]:
         """
@@ -696,9 +693,7 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                 If `return_dict` is `True`, a [`~models.controlnet.ControlNetOutput`] is returned, otherwise a tuple is
                 returned where the first element is the sample tensor.
         """
-        sam2_segmentation_masks = check_sam2_conditions(
-            self.config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, sam2_segmentation_masks
-        )
+        check_sam2_conditions(self.config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states)
 
         # check channel order
         channel_order = self.config.controlnet_conditioning_channel_order
@@ -795,7 +790,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                     image_encoder_hidden_states=image_encoder_hidden_states,
                     sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                     sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-                    sam2_segmentation_masks=sam2_segmentation_masks,
                 )
 
             else:
@@ -814,7 +808,6 @@ class ControlNetModel(ModelMixin, ConfigMixin, FromOriginalControlnetMixin):
                 image_encoder_hidden_states=image_encoder_hidden_states,
                 sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                 sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-                sam2_segmentation_masks=sam2_segmentation_masks,
             )
 
         # 5. Control net blocks

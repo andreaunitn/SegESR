@@ -10,8 +10,8 @@
 #   CHECKPOINTS       space-separated checkpoint folder names to test, e.g. "checkpoint-15000" (default: all of them)
 #   DATASETS          space-separated dataset names (default: "DIV2K DRealSR RealLR200 RealSR")
 #   SKIP_GENERATION   "true" to only (re)compute metrics on existing outputs (default: false)
-#   TEST_ARGS         extra test.py flags, e.g. "--sam_refresh_timesteps" to disable the SAM 2 refresh (default: none)
-#   TAG               suffix of the output / metric names, to keep test variants apart, e.g. "norefresh" (default: none)
+#   TEST_ARGS         extra test.py flags, e.g. "--guidance_scale 3" (default: none)
+#   TAG               suffix of the output / metric names, to keep test variants apart, e.g. "cfg3" (default: none)
 #
 # Metrics and a few images are also logged to TensorBoard in tensorboard/<run>/test[_<TAG>], at the training step
 # of each checkpoint (step 0 for a single model), next to the training logs in tensorboard/<run>/train.

@@ -1,0 +1,16 @@
+# SegESR training, stage 2 of 2, as in the ECCV 2026 paper: joint fine-tuning for 28K steps, starting from the
+# last stage 1 checkpoint, with lr 2e-7 for the SeeSR (DAPE) attentions and 5e-7 for the new modules.
+# Usage: accelerate launch train.py --config configs/train_segesr_stage2.yaml [--any_flag value ...]
+base_config: train_segesr.yaml
+
+seesr_model_path: preset/train_output/segesr_eccv_stage1/checkpoint-20000
+controlnet_model_name_or_path: preset/train_output/segesr_eccv_stage1/checkpoint-20000
+init_sam_from_dape: false              # the SAM 2 attentions come trained from stage 1
+output_dir: preset/train_output/segesr_eccv     # new name: preset/train_output/segesr holds the old segment-routing run
+
+max_train_steps: 28000
+checkpointing_steps: 4000
+learning_rate: 2.0e-7                  # SeeSR (DAPE) attentions
+finetune_lr: 5.0e-7                    # new modules
+train_controlnet_dape_attention: true
+train_unet_dape_attention: true

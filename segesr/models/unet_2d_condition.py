@@ -209,7 +209,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         attention_fusion: str = "sequential",
         use_sam2_image_attention: bool = False,
         use_sam2_segmentation_attention: bool = False,
-        segment_routing: bool = False,
     ):
         super().__init__()
 
@@ -741,7 +740,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         image_encoder_hidden_states: torch.Tensor = None,
         sam2_encoder_hidden_states: torch.Tensor = None,
         sam2_segmentation_encoder_hidden_states: torch.Tensor = None,
-        sam2_segmentation_masks: torch.Tensor = None,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         The [`UNet2DConditionModel`] forward method.
@@ -770,9 +768,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 If `return_dict` is True, an [`~models.unet_2d_condition.UNet2DConditionOutput`] is returned, otherwise
                 a `tuple` is returned where the first element is the sample tensor.
         """
-        sam2_segmentation_masks = check_sam2_conditions(
-            self.config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states, sam2_segmentation_masks
-        )
+        check_sam2_conditions(self.config, sam2_encoder_hidden_states, sam2_segmentation_encoder_hidden_states)
 
         # By default samples have to be AT least a multiple of the overall upsampling factor.
         # The overall upsampling factor is equal to 2 ** (# num of upsampling layers).
@@ -963,7 +959,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     image_encoder_hidden_states=image_encoder_hidden_states,
                     sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                     sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-                    sam2_segmentation_masks=sam2_segmentation_masks,
                     **additional_residuals,
                 )
             else:
@@ -997,7 +992,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 image_encoder_hidden_states=image_encoder_hidden_states,
                 sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                 sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-                sam2_segmentation_masks=sam2_segmentation_masks,
             )
             # To support T2I-Adapter-XL
             if (
@@ -1035,7 +1029,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     image_encoder_hidden_states=image_encoder_hidden_states,
                     sam2_encoder_hidden_states=sam2_encoder_hidden_states,
                     sam2_segmentation_encoder_hidden_states=sam2_segmentation_encoder_hidden_states,
-                    sam2_segmentation_masks=sam2_segmentation_masks,
                 )
             else:
                 sample = upsample_block(

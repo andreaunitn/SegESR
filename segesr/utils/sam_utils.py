@@ -14,11 +14,11 @@ SAM2_MODELS = {
 # Shape of the mask decoder low-res logits SegESR uses as segmentation embeddings.
 SEG_LOGITS_SIZE = 256
 
-# Maximum number of masks kept per image, sorted by area (as `data_tools/sam_processing.py --max_seg`).
+# N of Eq. 3: maximum number of masks kept per image, sorted by area (as `data_tools/sam_processing.py --max_seg`).
 MAX_MASKS = 150
 
-# The segment token axis is padded to a multiple of this (xformers attention bias alignment).
-SEGMENT_TOKENS_MULTIPLE = 8
+# H x W of Eq. 3: side of the aggregated mask map (the LR size of the x4 protocol, 128 -> 512).
+MASK_MAP_SIZE = 128
 
 def load_sam2(model_size="large", device=None, **kwargs):
     """
@@ -94,7 +94,8 @@ def compute_sam2_conditions(image, sam_generator, max_masks=None):
         max_masks (int, optional): keep only the largest `max_masks` masks.
 
     Returns:
-        img_embeds (torch.Tensor): (1, 256, 64, 64) Hiera image embedding.
+        img_embeds (torch.Tensor): (1, 1152, 32, 32) output of the last Hiera stage (Eq. 2 of the paper:
+            1/32 of the 1024x1024 input of SAM 2).
         seg_logits (torch.Tensor): (N, 1, 256, 256) mask decoder logits, sorted by mask area.
             N is at least 1 (an all-zero map is used when no mask is found).
     """
@@ -107,9 +108,17 @@ def compute_sam2_conditions(image, sam_generator, max_masks=None):
         if max_masks is not None:
             masks = masks[:max_masks]
 
-        # `generate` resets the predictor, so the full image is encoded again here
-        sam_generator.predictor.set_image(image_np)
-        img_embeds = sam_generator.predictor.get_image_embedding().cpu()
+        # `generate` resets the predictor, so the full image is encoded again here; the last Hiera stage is
+        # read from the trunk, before the FPN neck
+        trunk_outputs = []
+        hook = sam_generator.predictor.model.image_encoder.trunk.register_forward_hook(
+            lambda module, inputs, outputs: trunk_outputs.append(outputs[-1])
+        )
+        try:
+            sam_generator.predictor.set_image(image_np)
+        finally:
+            hook.remove()
+        img_embeds = trunk_outputs[-1].float().cpu()
         seg_logits = get_mask_logits_from_anns(sam_generator, masks)
 
     if seg_logits.shape[0] == 0:
@@ -118,14 +127,14 @@ def compute_sam2_conditions(image, sam_generator, max_masks=None):
     return img_embeds, seg_logits
 
 def seg_logits_to_hidden_states(seg_logits):
-    """(N, 1, 256, 256) per-mask logits -> (1, N, 256, 256) batch expected by `build_segment_conditions`."""
+    """(N, 1, 256, 256) per-mask logits of one image -> (1, N, 256, 256) batch."""
 
     return seg_logits.squeeze(1).unsqueeze(0)
 
 def pad_seg_logits(seg_logits_list):
     """
-    Stacks per-image (N_i, 256, 256) mask logits into a (B, max N_i, 256, 256) batch.
-    Padding maps are all-zero, which `build_segment_conditions` treats as "no mask".
+    Stacks per-image (N_i, 256, 256) mask logits into a (B, max N_i, 256, 256) batch, padding with all-zero
+    maps, which `aggregate_mask_logits` leaves out of the maximum.
     """
 
     max_masks = max(logits.shape[0] for logits in seg_logits_list)
@@ -134,74 +143,56 @@ def pad_seg_logits(seg_logits_list):
         batch[i, :logits.shape[0]] = logits
     return batch
 
-def build_segment_conditions(img_embeds, seg_logits, mask_size, pad_to=SEGMENT_TOKENS_MULTIPLE):
+def aggregate_mask_logits(seg_logits, size=MASK_MAP_SIZE):
     """
-    Turns the SAM 2 outputs into the inputs of the segmentation attention (SMCA): one token per
-    segment plus its binary mask, so that each latent pixel attends only to the segments covering it
-    (see `segment_routed_attention` in the UNet blocks).
-
-    Each segment token is the Hiera embedding averaged inside the mask (weighted by the mask
-    probabilities); the masks are the mask logits > 0, as in SAM 2. Token 0 is an all-zero
-    "null" token that covers the whole image: pixels outside every mask attend to it, which
-    gives a zero update. All-zero logit maps (empty images, batch padding) are treated as no mask.
-    The token axis is zero-padded to a multiple of `pad_to`, as xformers requires for attention biases.
+    Eq. 3 of the paper: bilinear upsampling of the N mask logits to H x W and pixel-wise maximum.
+    All-zero logit maps (batch padding) are left out of the maximum; an image without masks gives all zeros.
 
     Args:
-        img_embeds (torch.Tensor): (B, C, 64, 64) Hiera image embeddings.
         seg_logits (torch.Tensor): (B, N, 256, 256) mask decoder logits.
-        mask_size (tuple): (h, w) resolution of the returned masks, i.e. of the latents.
 
     Returns:
-        tokens (torch.Tensor): (B, K, C) segment tokens, K = 1 + N padded to a multiple of `pad_to`.
-        masks (torch.Tensor): (B, K, h, w) binary segment masks.
+        torch.Tensor: (B, size, size) aggregated soft mask map.
     """
 
-    embeds = img_embeds.float()
-    seg_logits = seg_logits.float()
-    batch_size, channels = embeds.shape[:2]
+    logits = F.interpolate(seg_logits.float(), size=(size, size), mode="bilinear", align_corners=False)
+    valid = seg_logits.flatten(2).abs().amax(dim=-1) > 0
+    logits = logits.masked_fill(~valid[..., None, None], float("-inf"))
+    aggregated = logits.amax(dim=1)
+    return torch.where(torch.isfinite(aggregated), aggregated, torch.zeros_like(aggregated))
 
-    valid = (seg_logits.flatten(2).abs().amax(dim=-1) > 0).float()[..., None, None]
+def seg_logits_to_tokens(seg_logits):
+    """
+    SMCA context: the aggregated mask map of Eq. 3, one token per row (H tokens of W values).
 
-    # SAM 2 resizes the input to a square, so its embeddings and logits share the image extent
-    pool_masks = torch.sigmoid(F.interpolate(seg_logits, size=embeds.shape[-2:], mode="bilinear", align_corners=False)) * valid
-    areas = pool_masks.flatten(2).sum(dim=-1, keepdim=True)
-    tokens = torch.einsum("bnhw,bchw->bnc", pool_masks, embeds) / areas.clamp_min(1e-6)
+    Args:
+        seg_logits (torch.Tensor): (B, N, 256, 256) mask decoder logits.
 
-    masks = (F.interpolate(seg_logits, size=tuple(mask_size), mode="bilinear", align_corners=False) > 0).float() * valid
+    Returns:
+        torch.Tensor: (B, 128, 128) tokens.
+    """
 
-    tokens = torch.cat([tokens.new_zeros(batch_size, 1, channels), tokens], dim=1)
-    masks = torch.cat([masks.new_ones(batch_size, 1, *masks.shape[-2:]), masks], dim=1)
-
-    num_padding = -tokens.shape[1] % pad_to
-    if num_padding:
-        tokens = F.pad(tokens, (0, 0, 0, num_padding))
-        masks = F.pad(masks, (0, 0, 0, 0, 0, num_padding))
-
-    return tokens, masks
+    return aggregate_mask_logits(seg_logits).contiguous()
 
 def model_uses_sam2(config):
     """Whether a SegESR UNet/ControlNet with this config is conditioned on SAM 2."""
 
     return config.use_sam2_image_attention or config.use_sam2_segmentation_attention
 
-def sam2_model_kwargs(config, img_embeds, seg_logits, mask_size, dtype):
+def sam2_model_kwargs(config, img_embeds, seg_logits, dtype):
     """
     Builds the SAM 2 inputs of a SegESR UNet/ControlNet from the SAM 2 outputs, with only the entries its
     config uses (an empty dict for a model without SAM 2 attentions).
 
     Args:
-        config: UNet/ControlNet config (`use_sam2_image_attention`, `use_sam2_segmentation_attention`, `segment_routing`).
-        img_embeds (torch.Tensor): (B, 256, 64, 64) Hiera image embeddings.
+        config: UNet/ControlNet config (`use_sam2_image_attention`, `use_sam2_segmentation_attention`).
+        img_embeds (torch.Tensor): (B, 1152, 32, 32) last Hiera stage.
         seg_logits (torch.Tensor): (B, N, 256, 256) mask decoder logits.
-        mask_size (tuple): (h, w) latent resolution of the segment masks.
     """
 
     kwargs = {}
     if config.use_sam2_image_attention:
         kwargs["sam2_encoder_hidden_states"] = img_embeds.to(dtype)
     if config.use_sam2_segmentation_attention:
-        segment_tokens, segment_masks = build_segment_conditions(img_embeds, seg_logits, mask_size)
-        kwargs["sam2_segmentation_encoder_hidden_states"] = segment_tokens.to(dtype)
-        if config.segment_routing:
-            kwargs["sam2_segmentation_masks"] = segment_masks.to(dtype)
+        kwargs["sam2_segmentation_encoder_hidden_states"] = seg_logits_to_tokens(seg_logits).to(dtype)
     return kwargs

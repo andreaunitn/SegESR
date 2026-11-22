@@ -1,10 +1,10 @@
 """
 CPU smoke tests of the SegESR models and pipeline with tiny random weights: a training step
-(ControlNet + UNet, gradient checkpointing, batched variable mask counts, clean SAM 2 conditions)
-and the denoising loop (classifier-free guidance, latent tiling, segment routing, SAM 2 refresh),
+(ControlNet + UNet, gradient checkpointing, batched variable mask counts)
+and the denoising loop (classifier-free guidance, latent tiling),
 for the SeeSR baseline, PAFB and the full SegESR architecture.
 
-No pretrained weights or GPU are needed; SAM 2 is replaced by a stub.
+No pretrained weights or GPU are needed; the SAM 2 outputs are random tensors.
 
 Run with: pytest tests/test_pipeline_smoke.py
 """
@@ -14,7 +14,6 @@ import torch
 from diffusers import AutoencoderKL, DDPMScheduler
 from transformers import CLIPTextConfig, CLIPTextModel
 
-import segesr.pipelines.pipeline_segesr as pipeline_module
 from segesr.dataloaders.paired_dataset import collate_fn
 from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
@@ -23,12 +22,11 @@ from segesr.utils.validation import get_sam_kwargs
 
 TEXT_DIM = 32
 DAPE_DIM = 512
-SAM_DIM = 256
+SAM_DIM = 1152  # last Hiera stage of SAM 2.1 large, 32x32
 
 SEESR = {}
 PAFB = dict(attention_fusion="parallel")
-FULL = dict(attention_fusion="parallel", use_sam2_image_attention=True, use_sam2_segmentation_attention=True, segment_routing=True)
-NO_ROUTING = {**FULL, "segment_routing": False}
+FULL = dict(attention_fusion="parallel", use_sam2_image_attention=True, use_sam2_segmentation_attention=True)
 
 def make_models(**architecture):
     torch.manual_seed(0)
@@ -47,15 +45,6 @@ def make_models(**architecture):
     controlnet = ControlNetModel.from_unet(unet, use_image_cross_attention=True)
     return unet, controlnet
 
-def stub_sam_conditions(image, sam_generator, max_masks=None):
-    """Stands in for `compute_sam2_conditions`: 3 masks (top half, bottom half, left strip)."""
-
-    logits = torch.full((3, 1, 256, 256), -10.0)
-    logits[0, :, :128] = 10.0
-    logits[1, :, 128:] = 10.0
-    logits[2, :, :, :100] = 10.0
-    return torch.randn(1, SAM_DIM, 64, 64), logits
-
 @pytest.mark.parametrize("architecture", [SEESR, PAFB, FULL], ids=["seesr", "pafb", "full"])
 def test_training_step(architecture):
     unet, controlnet = make_models(**architecture)
@@ -66,12 +55,10 @@ def test_training_step(architecture):
 
     examples = [
         {
-            "sam_img_embeds": torch.randn(SAM_DIM, 64, 64),
+            "sam_img_embeds": torch.randn(SAM_DIM, 32, 32),
             "sam_seg_embeds": torch.randn(num_lr, 256, 256) * 5,
-            "sam_img_embeds_gt": torch.randn(SAM_DIM, 64, 64),
-            "sam_seg_embeds_gt": torch.randn(num_gt, 256, 256) * 5,
         }
-        for num_lr, num_gt in [(3, 7), (11, 2)]
+        for num_lr in (3, 11)
     ]
     batch = collate_fn(examples)
 
@@ -79,7 +66,7 @@ def test_training_step(architecture):
     timesteps = torch.tensor([10, 900])
     text = torch.randn(2, 7, TEXT_DIM)
     dape = torch.randn(2, 4, DAPE_DIM)
-    sam_kwargs = get_sam_kwargs(batch, "cpu", torch.float32, unet.config, mask_size=latents.shape[-2:], use_clean=torch.tensor([True, False]))
+    sam_kwargs = get_sam_kwargs(batch, "cpu", torch.float32, unet.config)
     assert bool(sam_kwargs) == (architecture is FULL)
 
     down_block_res_samples, mid_block_res_sample = controlnet(
@@ -99,24 +86,22 @@ def test_training_step(architecture):
         assert all(m.fusion_conv.weight.grad.abs().sum() > 0 for m in unet.modules() if hasattr(m, "fusion_conv"))
 
     if architecture is FULL:
-        # The SAM 2 branches start with zero fusion weight: their attentions get gradients once the fusion
-        # conv has moved, but they are already part of the graph
+        # The fusion conv starts as the average of the four branches: the SAM 2 attentions learn from the first step
         for model in (unet, controlnet):
             grads = [p.grad for name, p in model.named_parameters() if "sam2_" in name]
-            assert grads and all(g is not None for g in grads)
+            assert grads and all(g is not None and g.abs().sum() > 0 for g in grads)
 
 @pytest.mark.parametrize(
-    "architecture, size, tile_size, refresh_timesteps",
+    "architecture, size, tile_size",
     [
-        (SEESR, 256, 24, [700, 400]),       # baseline: no SAM 2 at all, the refresh is ignored
-        (PAFB, 128, 96, None),              # 16x16 latents, not tiled
-        (FULL, 128, 96, None),
-        (FULL, 256, 24, [700, 400]),        # 32x32 latents, 24x24 tiles, two SAM 2 refreshes
-        (NO_ROUTING, 256, 24, [700, 400]),  # SAM 2 attentions without segment routing
+        (SEESR, 256, 24),   # baseline: no SAM 2 at all, tiled
+        (PAFB, 128, 96),    # 16x16 latents, not tiled
+        (FULL, 128, 96),
+        (FULL, 256, 24),    # 32x32 latents, 24x24 tiles
     ],
-    ids=["seesr-tiled-refresh", "pafb", "full", "full-tiled-refresh", "no-routing-tiled-refresh"],
+    ids=["seesr-tiled", "pafb", "full", "full-tiled"],
 )
-def test_pipeline_denoising_loop(monkeypatch, architecture, size, tile_size, refresh_timesteps):
+def test_pipeline_denoising_loop(monkeypatch, architecture, size, tile_size):
     unet, controlnet = make_models(**architecture)
     unet.eval()
     controlnet.eval()
@@ -133,12 +118,6 @@ def test_pipeline_denoising_loop(monkeypatch, architecture, size, tile_size, ref
     )
     pipeline.set_progress_bar_config(disable=True)
 
-    sam_calls = []
-    def sam_stub(image, sam_generator, max_masks=None):
-        sam_calls.append(image.size)
-        return stub_sam_conditions(image, sam_generator, max_masks)
-    monkeypatch.setattr(pipeline_module, "compute_sam2_conditions", sam_stub)
-
     unet_inputs = []
     unet_forward = unet.forward
     def spy(*args, **kwargs):
@@ -146,33 +125,27 @@ def test_pipeline_denoising_loop(monkeypatch, architecture, size, tile_size, ref
         return unet_forward(*args, **kwargs)
     monkeypatch.setattr(unet, "forward", spy)
 
-    uses_sam2 = architecture in (FULL, NO_ROUTING)
+    uses_sam2 = architecture is FULL
     with torch.no_grad():
         images = pipeline(
             prompt=None, image=torch.rand(1, 3, size, size),
             prompt_embeds=torch.randn(1, 7, TEXT_DIM), negative_prompt_embeds=torch.randn(1, 7, TEXT_DIM),
             num_inference_steps=6, guidance_scale=5.0, height=size, width=size, start_point="lr", start_steps=999,
             ram_encoder_hidden_states=torch.randn(1, 4, DAPE_DIM),
-            sam2_encoder_hidden_states=torch.randn(1, SAM_DIM, 64, 64) if uses_sam2 else None,
+            sam2_encoder_hidden_states=torch.randn(1, SAM_DIM, 32, 32) if uses_sam2 else None,
             sam2_segmentation_encoder_hidden_states=torch.randn(1, 5, 256, 256) * 5 if uses_sam2 else None,
-            sam_generator=object(), sam_refresh_timesteps=refresh_timesteps,
             latent_tiled_size=tile_size, latent_tiled_overlap=4, args=True, output_type="np",
         ).images
 
     assert images.shape == (1, size, size, 3)
     assert torch.isfinite(torch.from_numpy(images)).all()
 
-    # One SAM 2 refresh per threshold, on the full-size decoded image, for models with SAM 2 attentions only
-    assert sam_calls == ([(size, size)] * len(refresh_timesteps or []) if uses_sam2 else [])
-
-    # Only the SAM 2 inputs of the architecture; masks of the current tile, duplicated for classifier-free guidance
-    latent_tile = min(tile_size, size // 8)
+    # Only the SAM 2 inputs of the architecture, the same for every tile and timestep, duplicated for
+    # classifier-free guidance; the 5 masks become one 128x128 map, read as 128 row tokens
     expected = {}
     if uses_sam2:
-        expected = {"sam2_encoder_hidden_states": torch.Size([2, SAM_DIM, 64, 64]),
-                    "sam2_segmentation_encoder_hidden_states": torch.Size([2, 8, SAM_DIM])}
-        if architecture["segment_routing"]:
-            expected["sam2_segmentation_masks"] = torch.Size([2, 8, latent_tile, latent_tile])
+        expected = {"sam2_encoder_hidden_states": torch.Size([2, SAM_DIM, 32, 32]),
+                    "sam2_segmentation_encoder_hidden_states": torch.Size([2, 128, 128])}
     assert unet_inputs == [expected] * len(unet_inputs)
 
 def test_training_step_with_low_precision_frozen_weights():
@@ -198,7 +171,7 @@ def test_training_step_with_low_precision_frozen_weights():
     assert all(p.dtype == torch.float32 for p in trainable)
     assert all(p.dtype == torch.bfloat16 for m in (unet, controlnet) for p in m.parameters() if not p.requires_grad)
 
-    batch = collate_fn([{"sam_img_embeds": torch.randn(SAM_DIM, 64, 64), "sam_seg_embeds": torch.randn(4, 256, 256) * 5}])
+    batch = collate_fn([{"sam_img_embeds": torch.randn(SAM_DIM, 32, 32), "sam_seg_embeds": torch.randn(4, 256, 256) * 5}])
     latents = torch.randn(1, 4, 16, 16)
     sam_kwargs = get_sam_kwargs(batch, "cpu", torch.bfloat16, unet.config, mask_size=latents.shape[-2:])
 

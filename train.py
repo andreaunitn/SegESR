@@ -454,12 +454,7 @@ def parse_args(input_args=None):
     parser.add_argument(
         "--use_sam2_segmentation_attention",
         action="store_true",
-        help="Add the SAM 2 segment-token attention (SMCA). Requires `--attention_fusion parallel`.",
-    )
-    parser.add_argument(
-        "--segment_routing",
-        action="store_true",
-        help="Restrict the SMCA of each latent pixel to the segments covering it. Requires `--use_sam2_segmentation_attention`.",
+        help="Add the SAM 2 mask logit attention (SMCA). Requires `--attention_fusion parallel`.",
     )
 
     # SAM 2
@@ -471,19 +466,19 @@ def parse_args(input_args=None):
         help="SAM 2.1 model used for the perceptual loss and the validation sample. Must match the one used to precompute the embeddings.",
     )
     parser.add_argument(
-        "--clean_sam_prob",
-        type=float,
-        default=0.0,
-        help=(
-            "Maximum probability of conditioning a sample on the SAM 2 conditions of its GT image instead of its LR"
-            " image. It decreases linearly with the timestep (clean_sam_prob at t=0, 0 at t=T), matching the SAM 2"
-            " refresh on the predicted clean image at inference. Requires the 'sam_embeds_gt/' and 'seg_embeds_gt/' folders."
-        ),
-    )
-    parser.add_argument(
         "--use_sam_loss",
         action="store_true",
         help="Add the SAM 2 perceptual loss to the diffusion loss."
+    )
+    parser.add_argument(
+        "--perceptual_loss_decoder",
+        type=str,
+        default="vae",
+        choices=["vae", "tiny"],
+        help=(
+            "Decoder of the predicted x_0 for the perceptual losses: 'vae' = the SD VAE decoder, as in the paper"
+            " (Eq. 7, more memory); 'tiny' = the tiny VAE (`--tiny_vae_path`)."
+        ),
     )
     parser.add_argument(
         "--sam_loss_weight",
@@ -514,10 +509,6 @@ def parse_args(input_args=None):
     uses_sam2 = args.use_sam2_image_attention or args.use_sam2_segmentation_attention
     if uses_sam2 and args.attention_fusion != "parallel":
         raise ValueError("The SAM 2 attentions require `--attention_fusion parallel`.")
-    if args.segment_routing and not args.use_sam2_segmentation_attention:
-        raise ValueError("`--segment_routing` requires `--use_sam2_segmentation_attention`.")
-    if args.clean_sam_prob > 0 and not uses_sam2:
-        raise ValueError("`--clean_sam_prob` requires a SAM 2 attention (`--use_sam2_image_attention` or `--use_sam2_segmentation_attention`).")
 
     if args.total_batch_size is not None:
         # WORLD_SIZE is set by `accelerate launch` (1 for a single-GPU run)
@@ -529,11 +520,8 @@ def parse_args(input_args=None):
             )
         args.gradient_accumulation_steps = args.total_batch_size // per_pass
 
-    if not 0.0 <= args.clean_sam_prob <= 1.0:
-        raise ValueError("`--clean_sam_prob` must be in [0, 1].")
-
-    if (args.use_sam_loss or args.use_lpips_loss) and args.tiny_vae_path is None:
-        raise ValueError("`--tiny_vae_path` is required by `--use_sam_loss` and `--use_lpips_loss`.")
+    if (args.use_sam_loss or args.use_lpips_loss) and args.perceptual_loss_decoder == "tiny" and args.tiny_vae_path is None:
+        raise ValueError("`--perceptual_loss_decoder tiny` requires `--tiny_vae_path`.")
 
     if args.generate_validation_image and not args.validation_image:
         raise ValueError("`--validation_image` must be set when `--generate_validation_image` is used.")
@@ -665,7 +653,6 @@ def main(args):
         attention_fusion=args.attention_fusion,
         use_sam2_image_attention=args.use_sam2_image_attention,
         use_sam2_segmentation_attention=args.use_sam2_segmentation_attention,
-        segment_routing=args.segment_routing,
     )
     logger.info(f"SegESR architecture: {architecture}")
 
@@ -752,6 +739,8 @@ def main(args):
         logger.info("Enabling gradient checkpointing.")
         unet.enable_gradient_checkpointing()
         controlnet.enable_gradient_checkpointing()
+        if (args.use_sam_loss or args.use_lpips_loss) and args.perceptual_loss_decoder == "vae":
+            vae.enable_gradient_checkpointing()  # the perceptual losses backpropagate through the VAE decoder
 
     # Trainable weights stay float32 (mixed precision keeps float32 master weights); the frozen ones are stored in
     # the mixed-precision dtype, in which autocast uses them anyway
@@ -825,9 +814,6 @@ def main(args):
         null_text_ratio=args.null_text_ratio,
         load_sam=uses_sam2,
     )
-
-    if args.clean_sam_prob > 0 and not train_dataset.has_gt_sam:
-        raise ValueError("`--clean_sam_prob` > 0 requires the 'sam_embeds_gt/' and 'seg_embeds_gt/' training folders.")
 
     train_dataloader = torch.utils.data.DataLoader(
         train_dataset,
@@ -1019,15 +1005,8 @@ def main(args):
                 ram_encoder_hidden_states = batch["ram_values"].to(accelerator.device, dtype=weight_dtype)
                 timer.mark("VAE encode + text encoder + inputs")
 
-                # At low noise levels, sometimes condition on the SAM 2 outputs of the clean image
-                use_clean_sam = None
-                if args.clean_sam_prob > 0:
-                    clean_prob = args.clean_sam_prob * (1.0 - timesteps.float() / noise_scheduler.config.num_train_timesteps)
-                    use_clean_sam = torch.rand(bsz, device=latents.device) < clean_prob
-
-                sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, model_config, mask_size=latents.shape[-2:],
-                                            use_clean=use_clean_sam)
-                timer.mark("SAM 2 inputs (segment tokens/masks)")
+                sam_kwargs = get_sam_kwargs(batch, accelerator.device, weight_dtype, model_config)
+                timer.mark("SAM 2 inputs")
 
                 down_block_res_samples, mid_block_res_sample = controlnet(
                     noisy_latents,
@@ -1060,10 +1039,11 @@ def main(args):
                 logs = {"loss/train_diffusion": diffusion_loss.detach().item()}
 
                 if sam_loss_fn is not None or lpips_loss_fn is not None:
-                    # Decode the predicted x_0 with the (frozen, differentiable) tiny VAE so that
+                    # Eq. 6-7: decode the posterior mean x_0 with the frozen (differentiable) decoder, so that
                     # the perceptual losses backpropagate into the UNet and the ControlNet
                     pred_x0_latents = predict_original_latents(noise_scheduler, noisy_latents, model_pred, timesteps)
-                    sr_rgb = decode_latents_to_rgb(tiny_vae, pred_x0_latents, weight_dtype)
+                    decoder = vae if args.perceptual_loss_decoder == "vae" else tiny_vae
+                    sr_rgb = decode_latents_to_rgb(decoder, pred_x0_latents, weight_dtype)
                     gt_rgb = (pixel_values.to(torch.float32) + 1.0) / 2.0
 
                     if sam_loss_fn is not None:
@@ -1076,7 +1056,7 @@ def main(args):
                         loss = loss + args.lpips_loss_weight * lpips_loss
                         logs["loss/train_lpips"] = lpips_loss.detach().item() * args.lpips_loss_weight
 
-                timer.mark("losses (diffusion + tiny VAE decode + SAM 2 loss)")
+                timer.mark("losses (diffusion + x_0 decode + perceptual losses)")
                 accelerator.backward(loss)
                 timer.mark("backward")
 

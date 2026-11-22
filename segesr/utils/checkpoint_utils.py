@@ -5,7 +5,7 @@ from segesr.models.controlnet import ControlNetModel
 from segesr.models.unet_2d_condition import UNet2DConditionModel
 
 # SegESR options stored in the UNet/ControlNet configs
-ARCHITECTURE_KEYS = ("attention_fusion", "use_sam2_image_attention", "use_sam2_segmentation_attention", "segment_routing")
+ARCHITECTURE_KEYS = ("attention_fusion", "use_sam2_image_attention", "use_sam2_segmentation_attention")
 
 def import_model_class_from_model_name_or_path(pretrained_model_name_or_path, revision=None):
     """

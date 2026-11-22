@@ -54,9 +54,11 @@ def init_sam_weights(model, accelerator, attention_modules):
                 if source_param.shape == target_param.shape:
                     new_target_sd[key] = source_param.clone()
                 elif target_param.dim() > 0 and source_param.shape[0] == target_param.shape[0]:
-                    if target_param.dim() > 1: # Weight matrix
-                        slice_dim = target_param.shape[1]
-                        new_target_sd[key] = source_param[:, :slice_dim].clone()
+                    if target_param.dim() > 1: # Weight matrix: the first input columns of DAPE, zeros beyond them
+                        num_columns = min(source_param.shape[1], target_param.shape[1])
+                        weight = torch.zeros_like(target_param)
+                        weight[:, :num_columns] = source_param[:, :num_columns]
+                        new_target_sd[key] = weight
                     else: # Bias vector
                         slice_dim = target_param.shape[0]
                         new_target_sd[key] = source_param[:slice_dim].clone()
@@ -159,9 +161,10 @@ def verify_weights(model, accelerator, attention_modules):
 
                             if source_param.shape != target_param.shape:
                                 if target_param.dim() > 0 and source_param.shape[0] == target_param.shape[0]:
-                                    if target_param.dim() > 1:  # Linear weights
-                                        slice_dim = target_param.shape[1]
-                                        source_slice = source_param[:, :slice_dim]
+                                    if target_param.dim() > 1:  # Linear weights: DAPE columns, then zeros
+                                        num_columns = min(source_param.shape[1], target_param.shape[1])
+                                        source_slice = torch.zeros_like(target_param)
+                                        source_slice[:, :num_columns] = source_param[:, :num_columns]
                                     else: # Bias terms
                                         slice_dim = target_param.shape[0]
                                         source_slice = source_param[:slice_dim]

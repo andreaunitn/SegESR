@@ -1,17 +1,25 @@
-# Full SegESR training configuration: the SeeSR baseline (configs/train_seesr.yaml) with every SegESR component.
+# SegESR training, stage 1 of 2, as in the ECCV 2026 paper: starting from SeeSR, only the new modules (SICA,
+# SMCA, PAFB fusion convs) are trained, for 20K steps at lr 9e-7. Stage 2: configs/train_segesr_stage2.yaml.
 # Usage: accelerate launch train.py --config configs/train_segesr.yaml [--any_flag value ...]
+# Every setting follows Sec. 3-4.1 of the paper; see the README for the details the paper leaves open.
 base_config: train_seesr.yaml
 
-output_dir: preset/train_output/segesr
+output_dir: preset/train_output/segesr_eccv_stage1
 
 # ---------------------------------------------------------------- Architecture
 attention_fusion: parallel             # PAFB
-use_sam2_image_attention: true         # SICA
-use_sam2_segmentation_attention: true  # SMCA (segment tokens)
-segment_routing: true                  # each pixel attends only to its segments
+use_sam2_image_attention: true         # SICA: Hiera embeddings
+use_sam2_segmentation_attention: true  # SMCA: mask decoder logits, one token per logit row
 
 # ---------------------------------------------------------------- Training
-# Up to 50% of the low-noise samples are conditioned on the SAM 2 outputs of the GT image, to match the
-# SAM 2 refresh on the predicted clean image at inference. Needs 'sam_embeds_gt/' + 'seg_embeds_gt/'.
-clean_sam_prob: 0.5
+train_batch_size: 1                    # paper: batch 1 x 4 accumulation steps
+gradient_accumulation_steps: 4
+max_train_steps: 20000
+checkpointing_steps: 5000
+finetune_lr: 9.0e-7                    # new modules
+train_controlnet_dape_attention: false # the SeeSR modules stay frozen in stage 1
+train_unet_dape_attention: false
 use_sam_loss: true                     # SAM 2 perceptual loss
+sam_loss_weight: 0.1                   # lambda of Eq. 8
+perceptual_loss_decoder: vae           # Eq. 7: I_0 = D_vae(z_0), the SD VAE decoder
+mixed_precision: bf16                  # as in the paper (RTX 4090); the cluster GPUs (Turing) need fp16
