@@ -189,3 +189,58 @@ def test_training_step_with_low_precision_frozen_weights():
 
     assert torch.isfinite(model_pred.float()).all()
     assert all(p.grad is not None and p.grad.dtype == torch.float32 for p in trainable)
+
+class FrozenImageEncoder(torch.nn.Module):
+    """Stand-in for the SAM 2 image encoder: a random conv, returning the output key SamPerceptualLoss reads."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv = torch.nn.Conv2d(3, 8, kernel_size=4, stride=4)
+
+    def forward(self, x):
+        return {"vision_features": self.conv(x)}
+
+def test_sam_loss_alone_trains_the_sam_modules():
+    """L_sam alone (Eq. 6-7, as in train.py) gives non-zero gradients to the SAM 2 attentions and the fusion convs."""
+
+    from segesr.losses.sam_loss import SamPerceptualLoss
+    from segesr.utils.diffusion_utils import decode_latents_to_rgb, predict_original_latents
+
+    unet, controlnet = make_models(**FULL)
+    unet.enable_gradient_checkpointing()
+    controlnet.enable_gradient_checkpointing()
+    unet.train()
+    controlnet.train()
+
+    vae = AutoencoderKL(
+        block_out_channels=(8, 8, 8, 8), down_block_types=("DownEncoderBlock2D",) * 4,
+        up_block_types=("UpDecoderBlock2D",) * 4, latent_channels=4, norm_num_groups=8,
+    )
+    vae.requires_grad_(False)
+    vae.enable_gradient_checkpointing()
+    vae.train()  # gradient checkpointing of the decoder is active only in training mode, as in train.py
+    sam_loss_fn = SamPerceptualLoss(FrozenImageEncoder())
+
+    batch = collate_fn([{"sam_img_embeds": torch.randn(SAM_DIM, 32, 32), "sam_seg_embeds": torch.randn(4, 256, 256) * 5}])
+    sam_kwargs = get_sam_kwargs(batch, "cpu", torch.float32, unet.config)
+    noise_scheduler = DDPMScheduler(num_train_timesteps=1000)
+    noisy_latents, timesteps = torch.randn(1, 4, 16, 16), torch.tensor([300])
+    text, dape = torch.randn(1, 7, TEXT_DIM), torch.randn(1, 4, DAPE_DIM)
+
+    down, mid = controlnet(noisy_latents, timesteps, encoder_hidden_states=text, controlnet_cond=torch.rand(1, 3, 128, 128),
+                           return_dict=False, image_encoder_hidden_states=dape, **sam_kwargs)
+    model_pred = unet(noisy_latents, timesteps, encoder_hidden_states=text, down_block_additional_residuals=down,
+                      mid_block_additional_residual=mid, image_encoder_hidden_states=dape, **sam_kwargs).sample
+
+    sr_rgb = decode_latents_to_rgb(vae, predict_original_latents(noise_scheduler, noisy_latents, model_pred, timesteps), torch.float32)
+    assert sr_rgb.requires_grad
+    sam_loss = sam_loss_fn(sr_rgb, torch.rand(1, 3, 128, 128))
+    sam_loss.backward()
+
+    assert sam_loss.item() > 0
+    for kind in ("sam2_image_attentions", "sam2_segmentation_attentions", "fusion_conv"):
+        grads = [p.grad for name, p in unet.named_parameters() if kind in name and name.endswith(".weight")]
+        assert grads and any(g is not None and g.abs().sum() > 0 for g in grads), kind
+    # The frozen decoder and encoder only pass the gradient through
+    assert all(p.grad is None for p in vae.parameters())
+    assert all(p.grad is None for p in sam_loss_fn.image_encoder.parameters())
