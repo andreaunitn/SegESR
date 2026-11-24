@@ -62,6 +62,7 @@ from segesr.utils import (
     parse_args_with_config,
     predict_original_latents,
     register_checkpoint_hooks,
+    repage_optimizer_states,
     save_model_card,
     unfreeze_params,
     validation,
@@ -953,6 +954,8 @@ def main(args):
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
+            if args.use_8bit_adam and args.use_paged_optimizer:
+                logger.info(f"Paged optimizer states restored: {repage_optimizer_states(optimizer)}")
             global_step = int(path.split("-")[1])
 
             initial_global_step = global_step

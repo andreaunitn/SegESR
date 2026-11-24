@@ -1,4 +1,6 @@
 import os
+
+import torch
 from PIL import Image
 from transformers import PretrainedConfig
 from segesr.models.controlnet import ControlNetModel
@@ -76,6 +78,26 @@ def register_checkpoint_hooks(accelerator):
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
+
+def repage_optimizer_states(optimizer):
+    """
+    Puts the states of a resumed paged bitsandbytes optimizer back in paged memory. A saved paged state keeps its
+    `is_paged` flag when loaded, but the tensor is an ordinary one, which bitsandbytes then fails to prefetch
+    ("Error invalid argument ... pythonInterface.cpp"). Returns the number of states re-paged.
+    """
+
+    import bitsandbytes.functional as F
+
+    optimizer = getattr(optimizer, "optimizer", optimizer)  # accelerate wraps the optimizer
+    num_repaged = 0
+    for param, state in optimizer.state.items():
+        for key, value in state.items():
+            if isinstance(value, torch.Tensor) and getattr(value, "is_paged", False):
+                paged = F.get_paged(*value.shape, dtype=value.dtype, device=param.device)
+                paged.copy_(value)
+                state[key] = paged
+                num_repaged += 1
+    return num_repaged
 
 def save_model_card(repo_id, image_logs=None, base_model="", repo_folder=""):
     """
