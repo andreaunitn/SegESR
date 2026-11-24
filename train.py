@@ -741,6 +741,9 @@ def main(args):
         controlnet.enable_gradient_checkpointing()
         if (args.use_sam_loss or args.use_lpips_loss) and args.perceptual_loss_decoder == "vae":
             vae.enable_gradient_checkpointing()  # the perceptual losses backpropagate through the VAE decoder
+            # diffusers checkpoints the decoder only in training mode; the SD VAE has no dropout and only GroupNorm,
+            # so training mode changes nothing else
+            vae.decoder.train()
 
     # Trainable weights stay float32 (mixed precision keeps float32 master weights); the frozen ones are stored in
     # the mixed-precision dtype, in which autocast uses them anyway
